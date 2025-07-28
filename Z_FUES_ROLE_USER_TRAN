@@ -91,6 +91,14 @@ SELECTION-SCREEN:
     COMMENT /1(78) TEXT-c03,
   END OF BLOCK blk4.
 
+AT SELECTION-SCREEN.
+  IF p_ruser = p_rnousr.
+    MESSAGE 'Select either "Only roles with users" or "Include roles without users", not both' TYPE 'E'.
+  ENDIF.
+  IF p_urole = p_unorol.
+    MESSAGE 'Select either "Only users with roles" or "Include users without roles", not both' TYPE 'E'.
+  ENDIF.
+
 * Main Processing
 START-OF-SELECTION.
   CASE 'X'.

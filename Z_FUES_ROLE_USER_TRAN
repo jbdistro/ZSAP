@@ -48,22 +48,22 @@ DATA: gt_user_role       TYPE TABLE OF ty_user_role,
       lo_alv              TYPE REF TO cl_salv_table.
 
 * Selection Screen
-SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01.
+SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE 'View Selection'.
   SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) TEXT-r01 FOR FIELD rb_user.
+    SELECTION-SCREEN COMMENT 1(30) 'User/Role View' FOR FIELD rb_user.
     PARAMETERS: rb_user RADIOBUTTON GROUP rb1 DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) TEXT-r02 FOR FIELD rb_role.
+    SELECTION-SCREEN COMMENT 1(30) 'Role/Transaction View' FOR FIELD rb_role.
     PARAMETERS: rb_role RADIOBUTTON GROUP rb1.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) TEXT-r03 FOR FIELD rb_trans.
+    SELECTION-SCREEN COMMENT 1(30) 'Transaction/Auth View' FOR FIELD rb_trans.
     PARAMETERS: rb_trans RADIOBUTTON GROUP rb1.
   SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK blk1.
 
-SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02.
+SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE 'Selection Criteria'.
   SELECT-OPTIONS:
     s_role   FOR agr_define-agr_name,    " Role selection
     s_user   FOR usr02-bname,            " User selection
@@ -74,30 +74,20 @@ SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02.
     s_tdate  FOR agr_users-to_dat.       " To date selection
 SELECTION-SCREEN END OF BLOCK blk2.
 
-SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE TEXT-b03.
+SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE 'Filter Options'.
   PARAMETERS:
     p_inact  AS CHECKBOX DEFAULT ' ',    " Include inactive users
-    p_urole  AS CHECKBOX DEFAULT 'X',    " Only users with roles
-    p_ruser  AS CHECKBOX DEFAULT 'X',    " Only roles with users
     p_rnousr AS CHECKBOX DEFAULT ' ',    " Include roles without users
     p_unorol AS CHECKBOX DEFAULT ' '.    " Include users without roles
 SELECTION-SCREEN END OF BLOCK blk3.
 
 * Text Elements
 SELECTION-SCREEN:
-  BEGIN OF BLOCK blk4 WITH FRAME TITLE TEXT-b04,
-    COMMENT /1(78) TEXT-c01,
-    COMMENT /1(78) TEXT-c02,
-    COMMENT /1(78) TEXT-c03,
+  BEGIN OF BLOCK blk4 WITH FRAME TITLE 'Program Info',
+    COMMENT /1(78) 'Select the view and optional filters.',
+    COMMENT /1(78) 'Tick checkboxes to include additional data.',
+    COMMENT /1(78) 'Inactive users are excluded unless specified.',
   END OF BLOCK blk4.
-
-AT SELECTION-SCREEN.
-  IF p_ruser = p_rnousr.
-    MESSAGE 'Select either "Only roles with users" or "Include roles without users", not both' TYPE 'E'.
-  ENDIF.
-  IF p_urole = p_unorol.
-    MESSAGE 'Select either "Only users with roles" or "Include users without roles", not both' TYPE 'E'.
-  ENDIF.
 
 * Main Processing
 START-OF-SELECTION.
@@ -118,7 +108,6 @@ FORM process_user_role_view.
   PERFORM add_roles_without_users.
   PERFORM add_users_without_roles.
   PERFORM calculate_counts.
-  PERFORM apply_user_role_filters.
   PERFORM add_status_column.
   PERFORM build_user_role_summary.
   PERFORM display_user_role_alv.
@@ -283,18 +272,6 @@ FORM calculate_counts.
       ).
     ENDIF.
   ENDLOOP.
-ENDFORM.
-
-*&---------------------------------------------------------------------*
-*&      Form  APPLY_USER_ROLE_FILTERS
-*&---------------------------------------------------------------------*
-FORM apply_user_role_filters.
-  IF p_urole = 'X'.
-    DELETE gt_user_role WHERE user_id IS INITIAL OR roles_per_user = 0.
-  ENDIF.
-  IF p_ruser = 'X'.
-    DELETE gt_user_role WHERE role_name IS INITIAL OR users_per_role = 0.
-  ENDIF.
 ENDFORM.
 
 *&---------------------------------------------------------------------*

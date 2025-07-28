@@ -14,6 +14,7 @@ TYPES: BEGIN OF ty_user_role,
          roles_per_user TYPE i,
          users_per_role TYPE i,
          user_inactive TYPE c LENGTH 1,
+         status        TYPE string,
        END OF ty_user_role.
 
 * Structure for Role-Transaction relationships
@@ -110,6 +111,7 @@ FORM process_user_role_view.
   PERFORM add_users_without_roles.
   PERFORM calculate_counts.
   PERFORM apply_user_role_filters.
+  PERFORM add_status_column.
   PERFORM build_user_role_summary.
   PERFORM display_user_role_alv.
 ENDFORM.
@@ -288,6 +290,19 @@ FORM apply_user_role_filters.
 ENDFORM.
 
 *&---------------------------------------------------------------------*
+*&      Form  ADD_STATUS_COLUMN
+*&---------------------------------------------------------------------*
+FORM add_status_column.
+  LOOP AT gt_user_role ASSIGNING FIELD-SYMBOL(<ls_row>).
+    IF <ls_row>-user_inactive = 'X' OR <ls_row>-role_inactive = 'X'.
+      <ls_row>-status = 'Inactive'.
+    ELSE.
+      <ls_row>-status = 'Active'.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
 *&      Form  BUILD_USER_ROLE_SUMMARY
 *&---------------------------------------------------------------------*
 FORM build_user_role_summary.
@@ -455,6 +470,7 @@ FORM display_user_role_alv.
       TRY. lo_columns->get_column( 'ROLES_PER_USER' )->set_medium_text( 'Roles per User' ). CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_columns->get_column( 'USERS_PER_ROLE' )->set_medium_text( 'Users per Role' ). CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_columns->get_column( 'USER_INACTIVE' )->set_medium_text( 'User Inactive' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'STATUS' )->set_medium_text( 'Status' ). CATCH cx_salv_not_found. ENDTRY.
 
       lo_columns->set_optimize( abap_true ).
       lo_alv->display( ).
@@ -463,6 +479,7 @@ FORM display_user_role_alv.
       MESSAGE lx_msg->get_text( ) TYPE 'E'.
   ENDTRY.
 ENDFORM.
+
 
 *&---------------------------------------------------------------------*
 *&      Form  DISPLAY_ROLE_TRANS_ALV

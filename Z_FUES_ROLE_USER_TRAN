@@ -14,6 +14,7 @@ TYPES: BEGIN OF ty_user_role,
          roles_per_user TYPE i,
          users_per_role TYPE i,
          user_inactive TYPE c LENGTH 1,
+         status        TYPE string,
        END OF ty_user_role.
 
 * Structure for Role-Transaction relationships
@@ -74,13 +75,35 @@ SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02.
 SELECTION-SCREEN END OF BLOCK blk2.
 
 SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE TEXT-b03.
-  PARAMETERS:
-    p_inact  AS CHECKBOX DEFAULT ' ',    " Include inactive users
-    p_urole  AS CHECKBOX DEFAULT 'X',    " Only users with roles
-    p_ruser  AS CHECKBOX DEFAULT 'X',    " Only roles with users
-    p_rnousr AS CHECKBOX DEFAULT ' ',    " Include roles without users
-    p_unorol AS CHECKBOX DEFAULT ' '.    " Include users without roles
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(40) 'Include inactive users' FOR FIELD p_inact.
+    PARAMETERS p_inact AS CHECKBOX DEFAULT ' '.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(40) 'Only users having roles' FOR FIELD p_only_users_with_roles.
+    PARAMETERS p_only_users_with_roles AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(40) 'Only roles having users' FOR FIELD p_only_roles_with_users.
+    PARAMETERS p_only_roles_with_users AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(40) 'Include roles without users' FOR FIELD p_show_roles_without_users.
+    PARAMETERS p_show_roles_without_users AS CHECKBOX DEFAULT ' '.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(40) 'Include users without roles' FOR FIELD p_show_users_without_roles.
+    PARAMETERS p_show_users_without_roles AS CHECKBOX DEFAULT ' '.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK blk3.
+
+AT SELECTION-SCREEN.
+  IF p_only_roles_with_users = 'X' AND p_show_roles_without_users = 'X'.
+    MESSAGE 'Select either roles with users or roles without users, not both' TYPE 'E'.
+  ENDIF.
+  IF p_only_users_with_roles = 'X' AND p_show_users_without_roles = 'X'.
+    MESSAGE 'Select either users with roles or users without roles, not both' TYPE 'E'.
+  ENDIF.
 
 * Text Elements
 SELECTION-SCREEN:
@@ -110,6 +133,7 @@ FORM process_user_role_view.
   PERFORM add_users_without_roles.
   PERFORM calculate_counts.
   PERFORM apply_user_role_filters.
+  PERFORM add_status_column.
   PERFORM build_user_role_summary.
   PERFORM display_user_role_alv.
 ENDFORM.
@@ -174,7 +198,7 @@ FORM get_user_role_data.
   ENDLOOP.
 
   gt_user_role = lt_temp.
-  IF sy-subrc <> 0 AND p_rnousr = ' ' AND p_unorol = ' '.
+  IF sy-subrc <> 0 AND p_show_roles_without_users = ' ' AND p_show_users_without_roles = ' '.
     MESSAGE 'No users found for the selected criteria' TYPE 'I' DISPLAY LIKE 'E'.
     LEAVE LIST-PROCESSING.
   ENDIF.
@@ -184,7 +208,7 @@ ENDFORM.
 *&      Form  ADD_ROLES_WITHOUT_USERS
 *&---------------------------------------------------------------------*
 FORM add_roles_without_users.
-  IF p_rnousr = 'X'.
+  IF p_show_roles_without_users = 'X'.
     SELECT a~agr_name
       FROM agr_define AS a
       LEFT JOIN agr_users AS r ON a~agr_name = r~agr_name
@@ -209,7 +233,7 @@ FORM add_users_without_roles.
   DATA: lv_current_date TYPE datum.
   lv_current_date = sy-datum.
 
-  IF p_unorol = 'X'.
+  IF p_show_users_without_roles = 'X'.
     SELECT u~bname, u~class, u~gltgv
       FROM usr02 AS u
       LEFT JOIN agr_users AS r ON u~bname = r~uname
@@ -279,12 +303,25 @@ ENDFORM.
 *&      Form  APPLY_USER_ROLE_FILTERS
 *&---------------------------------------------------------------------*
 FORM apply_user_role_filters.
-  IF p_urole = 'X'.
+  IF p_only_users_with_roles = 'X'.
     DELETE gt_user_role WHERE user_id IS INITIAL OR roles_per_user = 0.
   ENDIF.
-  IF p_ruser = 'X'.
+  IF p_only_roles_with_users = 'X'.
     DELETE gt_user_role WHERE role_name IS INITIAL OR users_per_role = 0.
   ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  ADD_STATUS_COLUMN
+*&---------------------------------------------------------------------*
+FORM add_status_column.
+  LOOP AT gt_user_role ASSIGNING FIELD-SYMBOL(<ls_row>).
+    IF <ls_row>-user_inactive = 'X' OR <ls_row>-role_inactive = 'X'.
+      <ls_row>-status = 'Inactive'.
+    ELSE.
+      <ls_row>-status = 'Active'.
+    ENDIF.
+  ENDLOOP.
 ENDFORM.
 
 *&---------------------------------------------------------------------*
@@ -455,6 +492,7 @@ FORM display_user_role_alv.
       TRY. lo_columns->get_column( 'ROLES_PER_USER' )->set_medium_text( 'Roles per User' ). CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_columns->get_column( 'USERS_PER_ROLE' )->set_medium_text( 'Users per Role' ). CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_columns->get_column( 'USER_INACTIVE' )->set_medium_text( 'User Inactive' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'STATUS' )->set_medium_text( 'Status' ). CATCH cx_salv_not_found. ENDTRY.
 
       lo_columns->set_optimize( abap_true ).
       lo_alv->display( ).
@@ -463,6 +501,7 @@ FORM display_user_role_alv.
       MESSAGE lx_msg->get_text( ) TYPE 'E'.
   ENDTRY.
 ENDFORM.
+
 
 *&---------------------------------------------------------------------*
 *&      Form  DISPLAY_ROLE_TRANS_ALV

@@ -14,7 +14,6 @@ TYPES: BEGIN OF ty_user_role,
          roles_per_user TYPE i,
          users_per_role TYPE i,
          user_inactive TYPE c LENGTH 1,
-         status        TYPE c LENGTH 20,
        END OF ty_user_role.
 
 * Structure for Role-Transaction relationships
@@ -301,6 +300,9 @@ FORM add_status_column.
       <ls_row>-status = 'User Inactive'.
     ELSEIF <ls_row>-role_inactive = 'X'.
       <ls_row>-status = 'Role Inactive'.
+  LOOP AT gt_user_role ASSIGNING FIELD-SYMBOL(<ls_row>).
+    IF <ls_row>-user_inactive = 'X' OR <ls_row>-role_inactive = 'X'.
+      <ls_row>-status = 'Inactive'.
     ELSE.
       <ls_row>-status = 'Active'.
     ENDIF.

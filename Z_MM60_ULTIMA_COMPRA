@@ -1,0 +1,172 @@
+REPORT z_mm60_ultima_compra.
+
+TABLES: mara, makt, marc, mbew, ekko, ekpo.
+
+*---------------------------------------------------------------------*
+* Estructuras
+*---------------------------------------------------------------------*
+TYPES: BEGIN OF ty_po_data_temp,
+          aedat TYPE ekpo-aedat,    " Fecha creación de la posición OC
+          netpr TYPE ekpo-netpr,    " Precio neto
+          waers TYPE ekko-waers,    " Moneda desde EKKO
+          ebeln TYPE ekpo-ebeln,    " Add EBELN for tie-breaking
+          ebelp TYPE ekpo-ebelp,    " Add EBELP for tie-breaking
+        END OF ty_po_data_temp.
+
+TYPES: BEGIN OF ty_material,
+          matnr       TYPE c LENGTH 18,     " Material sin ceros iniciales
+          maktx       TYPE makt-maktx,      " Descripción
+          werks       TYPE marc-werks,      " Centro
+          mtart       TYPE mara-mtart,      " Tipo material
+          matkl       TYPE mara-matkl,      " Grupo artículos
+          meins       TYPE mara-meins,      " UM base
+          ekgrp       TYPE marc-ekgrp,      " Grupo compras
+          bkals       TYPE mbew-bklas,      " Cat. valoración
+          stprs       TYPE mbew-stprs,      " Precio estándar
+          waers       TYPE c LENGTH 5,      " Moneda última compra
+          last_date   TYPE ekpo-aedat,      " Fecha última compra
+          last_price  TYPE ekpo-netpr,      " Precio última compra
+        END OF ty_material.
+
+*---------------------------------------------------------------------*
+* Variables globales
+*---------------------------------------------------------------------*
+DATA: gt_materials TYPE STANDARD TABLE OF ty_material,
+      gs_material  TYPE ty_material.
+
+DATA: lt_po_data   TYPE STANDARD TABLE OF ty_po_data_temp,
+      ls_po_data   TYPE ty_po_data_temp.
+
+DATA: gt_fieldcat TYPE slis_t_fieldcat_alv,
+      gs_fieldcat TYPE slis_fieldcat_alv.
+
+*---------------------------------------------------------------------*
+* Selección de pantalla
+*---------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-t01.
+
+SELECT-OPTIONS:
+  so_matnr FOR mara-matnr,
+  so_mtart FOR mara-mtart,
+  so_matkl FOR mara-matkl,
+  so_werks FOR marc-werks.
+
+PARAMETERS:
+  p_langu TYPE sy-langu DEFAULT sy-langu,
+  p_val   TYPE abap_bool AS CHECKBOX DEFAULT abap_false.
+
+SELECTION-SCREEN END OF BLOCK b1.
+
+*---------------------------------------------------------------------*
+* START-OF-SELECTION
+*---------------------------------------------------------------------*
+START-OF-SELECTION.
+
+  " Selección de materiales y datos maestros
+  SELECT mara~matnr,
+           makt~maktx,
+           marc~werks,
+           mara~mtart,
+           mara~matkl,
+           mara~meins,
+           marc~ekgrp,
+           mbew~bklas AS bkals,
+           mbew~stprs
+    INTO TABLE @DATA(lt_raw)
+    FROM mara
+    INNER JOIN makt ON makt~matnr = mara~matnr AND makt~spras = @p_langu
+    INNER JOIN marc ON marc~matnr = mara~matnr
+    INNER JOIN mbew ON mbew~matnr = mara~matnr AND mbew~bwkey = marc~werks
+    WHERE mara~matnr IN @so_matnr
+      AND mara~mtart IN @so_mtart
+      AND mara~matkl IN @so_matkl
+      AND marc~werks IN @so_werks.
+
+  " Si no se encuentran materiales, salir
+  IF lt_raw IS INITIAL.
+    MESSAGE 'No se encontraron datos para los criterios de selección.' TYPE 'I'.
+    EXIT.
+  ENDIF.
+
+  LOOP AT lt_raw INTO DATA(ls_raw).
+    " Aplicar filtro de precio estándar
+    IF p_val = abap_true AND ls_raw-stprs IS INITIAL.
+      CONTINUE.
+    ENDIF.
+
+    CLEAR gs_material.
+    gs_material-matnr = |{ ls_raw-matnr ALPHA = OUT }|.
+    gs_material-maktx = ls_raw-maktx.
+    gs_material-werks = ls_raw-werks.
+    gs_material-mtart = ls_raw-mtart.
+    gs_material-matkl = ls_raw-matkl.
+    gs_material-meins = ls_raw-meins.
+    gs_material-ekgrp = ls_raw-ekgrp.
+    gs_material-bkals = ls_raw-bkals.
+    gs_material-stprs = ls_raw-stprs.
+
+    " Obtener TODAS las posiciones de OC relevantes para el material/centro
+    " y luego ordenar y tomar la primera
+    CLEAR lt_po_data. " Clear for each material
+    SELECT ekpo~aedat, ekpo~netpr, ekko~waers, ekpo~ebeln, ekpo~ebelp " Select all relevant fields
+      INTO TABLE @lt_po_data
+      FROM ekpo
+      INNER JOIN ekko ON ekko~ebeln = ekpo~ebeln
+      WHERE ekpo~matnr = @ls_raw-matnr
+        AND ekpo~werks = @ls_raw-werks
+        AND ekpo~loekz = @space. " <--- ESTE ES EL FILTRO: Solo posiciones de OC NO borradas.
+
+    IF lt_po_data IS NOT INITIAL.
+      " ORDENAR la tabla interna para encontrar la entrada más reciente de forma determinista
+      " priorizando la fecha de modificación, luego el número de pedido y posición
+      SORT lt_po_data BY aedat DESCENDING
+                           ebeln DESCENDING
+                           ebelp DESCENDING.
+
+      " Leer la primera entrada de la tabla interna ya ordenada
+      READ TABLE lt_po_data INTO ls_po_data INDEX 1.
+
+      gs_material-last_date  = ls_po_data-aedat.
+      gs_material-last_price = ls_po_data-netpr.
+      gs_material-waers      = ls_po_data-waers.
+    ENDIF.
+
+    APPEND gs_material TO gt_materials.
+  ENDLOOP.
+
+  " Construir catálogo de campos
+  PERFORM build_fieldcat.
+
+  " Mostrar ALV
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_structure_name = 'TY_MATERIAL'
+      it_fieldcat      = gt_fieldcat
+    TABLES
+      t_outtab         = gt_materials.
+
+*---------------------------------------------------------------------*
+* FORM build_fieldcat
+*---------------------------------------------------------------------*
+FORM build_fieldcat.
+  CLEAR gt_fieldcat.
+  DEFINE add_field.
+    gs_fieldcat-fieldname = &1.
+    gs_fieldcat-seltext_m = &2.
+    APPEND gs_fieldcat TO gt_fieldcat.
+  END-OF-DEFINITION.
+
+  add_field:
+    'MATNR'      'Material',
+    'WERKS'      'Centro',
+    'MAKTX'      'Descripción',
+    'MTART'      'Tipo Material',
+    'MATKL'      'Grupo Artículos',
+    'MEINS'      'UM Base',
+    'EKGRP'      'Grupo Compras',
+    'BKALS'      'Cat. Valoración',
+    'STPRS'      'Precio Estándar',
+    'LAST_DATE'  'Últ. Fecha Pedido',
+    'LAST_PRICE' 'Últ. Precio Pedido',
+    'WAERS'      'Moneda'.
+ENDFORM.

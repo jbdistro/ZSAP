@@ -77,8 +77,6 @@ SELECTION-SCREEN END OF BLOCK blk2.
 SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE TEXT-b03.
   PARAMETERS:
     p_inact  AS CHECKBOX DEFAULT ' ',    " Include inactive users
-    p_urole  AS CHECKBOX DEFAULT 'X',    " Only users with roles
-    p_ruser  AS CHECKBOX DEFAULT 'X',    " Only roles with users
     p_rnousr AS CHECKBOX DEFAULT ' ',    " Include roles without users
     p_unorol AS CHECKBOX DEFAULT ' '.    " Include users without roles
 SELECTION-SCREEN END OF BLOCK blk3.
@@ -90,14 +88,6 @@ SELECTION-SCREEN:
     COMMENT /1(78) TEXT-c02,
     COMMENT /1(78) TEXT-c03,
   END OF BLOCK blk4.
-
-AT SELECTION-SCREEN.
-  IF p_ruser = p_rnousr.
-    MESSAGE 'Select either "Only roles with users" or "Include roles without users", not both' TYPE 'E'.
-  ENDIF.
-  IF p_urole = p_unorol.
-    MESSAGE 'Select either "Only users with roles" or "Include users without roles", not both' TYPE 'E'.
-  ENDIF.
 
 * Main Processing
 START-OF-SELECTION.
@@ -289,11 +279,11 @@ ENDFORM.
 *&      Form  APPLY_USER_ROLE_FILTERS
 *&---------------------------------------------------------------------*
 FORM apply_user_role_filters.
-  IF p_urole = 'X'.
-    DELETE gt_user_role WHERE user_id IS INITIAL OR roles_per_user = 0.
+  IF p_unorol = ' '.
+    DELETE gt_user_role WHERE role_name IS INITIAL OR roles_per_user = 0.
   ENDIF.
-  IF p_ruser = 'X'.
-    DELETE gt_user_role WHERE role_name IS INITIAL OR users_per_role = 0.
+  IF p_rnousr = ' '.
+    DELETE gt_user_role WHERE user_id IS INITIAL OR users_per_role = 0.
   ENDIF.
 ENDFORM.
 

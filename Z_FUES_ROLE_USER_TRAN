@@ -293,6 +293,7 @@ ENDFORM.
 *&      Form  ADD_STATUS_COLUMN
 *&---------------------------------------------------------------------*
 FORM add_status_column.
+*  Merge conflict resolved - finalized status logic
   LOOP AT gt_user_role ASSIGNING FIELD-SYMBOL(<ls_row>).
     IF <ls_row>-user_inactive = 'X' AND <ls_row>-role_inactive = 'X'.
       <ls_row>-status = 'User & Role Inactive'.

@@ -47,23 +47,36 @@ DATA: gt_user_role       TYPE TABLE OF ty_user_role,
       gt_summary          TYPE TABLE OF ty_summary,
       lo_alv              TYPE REF TO cl_salv_table.
 
+* Text constants in Spanish
+CONSTANTS:
+  c_ttl_blk1(40) VALUE 'Seleccione el reporte',
+  c_ttl_blk2(40) VALUE 'Filtros de Selecci\u00f3n',
+  c_ttl_blk3(40) VALUE 'Opciones',
+  c_ttl_blk4(40) VALUE 'Descripci\u00f3n',
+  c_rad_user(40) VALUE 'Usuarios y Roles',
+  c_rad_role(40) VALUE 'Roles y Transacciones',
+  c_rad_trans(40) VALUE 'Transacciones y Autorizaciones',
+  c_com1(78) VALUE 'Visualizar relaci\u00f3n Usuario-Rol.',
+  c_com2(78) VALUE 'Visualizar relaci\u00f3n Rol-Transacci\u00f3n.',
+  c_com3(78) VALUE 'Visualizar relaci\u00f3n Transacci\u00f3n-Autorizaci\u00f3n.'.
+
 * Selection Screen
-SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01.
+SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE c_ttl_blk1.
   SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) TEXT-r01 FOR FIELD rb_user.
+    SELECTION-SCREEN COMMENT 1(30) c_rad_user FOR FIELD rb_user.
     PARAMETERS: rb_user RADIOBUTTON GROUP rb1 DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) TEXT-r02 FOR FIELD rb_role.
+    SELECTION-SCREEN COMMENT 1(30) c_rad_role FOR FIELD rb_role.
     PARAMETERS: rb_role RADIOBUTTON GROUP rb1.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) TEXT-r03 FOR FIELD rb_trans.
+    SELECTION-SCREEN COMMENT 1(30) c_rad_trans FOR FIELD rb_trans.
     PARAMETERS: rb_trans RADIOBUTTON GROUP rb1.
   SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK blk1.
 
-SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02.
+SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE c_ttl_blk2.
   SELECT-OPTIONS:
     s_role   FOR agr_define-agr_name,    " Role selection
     s_user   FOR usr02-bname,            " User selection
@@ -74,30 +87,20 @@ SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02.
     s_tdate  FOR agr_users-to_dat.       " To date selection
 SELECTION-SCREEN END OF BLOCK blk2.
 
-SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE TEXT-b03.
+SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE c_ttl_blk3.
   PARAMETERS:
     p_inact  AS CHECKBOX DEFAULT ' ',    " Include inactive users
-    p_urole  AS CHECKBOX DEFAULT 'X',    " Only users with roles
-    p_ruser  AS CHECKBOX DEFAULT 'X',    " Only roles with users
     p_rnousr AS CHECKBOX DEFAULT ' ',    " Include roles without users
     p_unorol AS CHECKBOX DEFAULT ' '.    " Include users without roles
 SELECTION-SCREEN END OF BLOCK blk3.
 
 * Text Elements
 SELECTION-SCREEN:
-  BEGIN OF BLOCK blk4 WITH FRAME TITLE TEXT-b04,
-    COMMENT /1(78) TEXT-c01,
-    COMMENT /1(78) TEXT-c02,
-    COMMENT /1(78) TEXT-c03,
+  BEGIN OF BLOCK blk4 WITH FRAME TITLE c_ttl_blk4,
+    COMMENT /1(78) c_com1,
+    COMMENT /1(78) c_com2,
+    COMMENT /1(78) c_com3,
   END OF BLOCK blk4.
-
-AT SELECTION-SCREEN.
-  IF p_ruser = p_rnousr.
-    MESSAGE 'Select either "Only roles with users" or "Include roles without users", not both' TYPE 'E'.
-  ENDIF.
-  IF p_urole = p_unorol.
-    MESSAGE 'Select either "Only users with roles" or "Include users without roles", not both' TYPE 'E'.
-  ENDIF.
 
 * Main Processing
 START-OF-SELECTION.
@@ -289,11 +292,11 @@ ENDFORM.
 *&      Form  APPLY_USER_ROLE_FILTERS
 *&---------------------------------------------------------------------*
 FORM apply_user_role_filters.
-  IF p_urole = 'X'.
-    DELETE gt_user_role WHERE user_id IS INITIAL OR roles_per_user = 0.
+  IF p_unorol = ' '.
+    DELETE gt_user_role WHERE role_name IS INITIAL OR roles_per_user = 0.
   ENDIF.
-  IF p_ruser = 'X'.
-    DELETE gt_user_role WHERE role_name IS INITIAL OR users_per_role = 0.
+  IF p_rnousr = ' '.
+    DELETE gt_user_role WHERE user_id IS INITIAL OR users_per_role = 0.
   ENDIF.
 ENDFORM.
 
@@ -303,9 +306,9 @@ ENDFORM.
 FORM add_status_column.
   LOOP AT gt_user_role ASSIGNING FIELD-SYMBOL(<ls_row>).
     IF <ls_row>-user_inactive = 'X' OR <ls_row>-role_inactive = 'X'.
-      <ls_row>-status = 'Inactive'.
+      <ls_row>-status = 'Inactivo'.
     ELSE.
-      <ls_row>-status = 'Active'.
+      <ls_row>-status = 'Activo'.
     ENDIF.
   ENDLOOP.
 ENDFORM.
@@ -376,12 +379,12 @@ FORM build_user_role_summary.
 
   " Build summary
   CLEAR gt_summary.
-  APPEND VALUE #( description = 'Total Users'       value = |{ lv_users }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Total Roles'       value = |{ lv_roles }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Inactive Users'    value = |{ lv_inactive_users }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Inactive Roles'    value = |{ lv_inactive_roles }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Users Without Roles' value = |{ lv_users_no_role }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Roles Without Users' value = |{ lv_roles_no_user }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Total de Usuarios'     value = |{ lv_users }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Total de Roles'        value = |{ lv_roles }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios Inactivos'    value = |{ lv_inactive_users }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Roles Inactivos'       value = |{ lv_inactive_roles }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios sin Roles'    value = |{ lv_users_no_role }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Roles sin Usuarios'    value = |{ lv_roles_no_user }| ) TO gt_summary.
 ENDFORM.
 
 *&---------------------------------------------------------------------*
@@ -450,9 +453,9 @@ FORM display_user_role_alv.
       " Header setup
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
       lo_grid->create_header_information(
-        row    = 1
-        column = 1
-        text   = 'USER-ROLE RELATIONSHIP REPORT' ).
+        row    = 1,
+        column = 1,
+        text   = 'REPORTE DE USUARIOS Y ROLES' ).
 
       " Add summary
       DATA: lv_row TYPE i VALUE 2.
@@ -464,21 +467,22 @@ FORM display_user_role_alv.
       lo_alv->set_top_of_list( lo_grid ).
 
       " Configure columns
-      DATA(lo_columns) = lo_alv->get_columns( ).
+      DATA(lo_columns)   = lo_alv->get_columns( ).
       DATA(lo_functions) = lo_alv->get_functions( ).
       lo_functions->set_all( abap_true ).
+      lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).
 
       " Set column headers
-      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Role' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'USER_ID' )->set_medium_text( 'User' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'USER_GROUP' )->set_medium_text( 'Group' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'FROM_DATE' )->set_medium_text( 'From Date' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'TO_DATE' )->set_medium_text( 'To Date' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'ROLE_INACTIVE' )->set_medium_text( 'Role Inactive' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'ROLES_PER_USER' )->set_medium_text( 'Roles per User' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'USERS_PER_ROLE' )->set_medium_text( 'Users per Role' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'USER_INACTIVE' )->set_medium_text( 'User Inactive' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'STATUS' )->set_medium_text( 'Status' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Rol' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USER_ID' )->set_medium_text( 'Usuario' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USER_GROUP' )->set_medium_text( 'Grupo' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'FROM_DATE' )->set_medium_text( 'Desde' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'TO_DATE' )->set_medium_text( 'Hasta' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_INACTIVE' )->set_medium_text( 'Rol inactivo' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLES_PER_USER' )->set_medium_text( 'Roles por Usuario' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USERS_PER_ROLE' )->set_medium_text( 'Usuarios por Rol' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USER_INACTIVE' )->set_medium_text( 'Usuario inactivo' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'STATUS' )->set_medium_text( 'Estado' ). CATCH cx_salv_not_found. ENDTRY.
 
       lo_columns->set_optimize( abap_true ).
       lo_alv->display( ).
@@ -503,20 +507,21 @@ FORM display_role_trans_alv.
       " Header setup
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
       lo_grid->create_header_information(
-        row    = 1
-        column = 1
-        text   = 'ROLE-TRANSACTION RELATIONSHIP REPORT' ).
+        row    = 1,
+        column = 1,
+        text   = 'REPORTE DE ROL Y TRANSACCI\u00d3N' ).
       lo_alv->set_top_of_list( lo_grid ).
 
       " Configure columns
-      DATA(lo_columns) = lo_alv->get_columns( ).
+      DATA(lo_columns)   = lo_alv->get_columns( ).
       DATA(lo_functions) = lo_alv->get_functions( ).
       lo_functions->set_all( abap_true ).
+      lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).
 
       " Set column headers
-      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Role Name' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transaction' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Description' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Rol' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transacci\u00f3n' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Descripci\u00f3n' ). CATCH cx_salv_not_found. ENDTRY.
 
       lo_columns->set_optimize( abap_true ).
       lo_alv->display( ).
@@ -540,23 +545,24 @@ FORM display_trans_auth_alv.
       " Header setup
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
       lo_grid->create_header_information(
-        row    = 1
-        column = 1
-        text   = 'TRANSACTION-AUTHORIZATION RELATIONSHIP REPORT' ).
+        row    = 1,
+        column = 1,
+        text   = 'REPORTE DE TRANSACCI\u00d3N Y AUTORIZACI\u00d3N' ).
       lo_alv->set_top_of_list( lo_grid ).
 
       " Configure columns
-      DATA(lo_columns) = lo_alv->get_columns( ).
+      DATA(lo_columns)   = lo_alv->get_columns( ).
       DATA(lo_functions) = lo_alv->get_functions( ).
       lo_functions->set_all( abap_true ).
+      lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).
 
       " Set column headers
-      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transaction' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Role/Auth' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Description' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'AUTH_OBJECT' )->set_medium_text( 'Auth Object' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'AUTH_FIELD' )->set_medium_text( 'Auth Field' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'AUTH_VALUE' )->set_medium_text( 'Auth Value' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transacci\u00f3n' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Rol' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Descripci\u00f3n' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_OBJECT' )->set_medium_text( 'Objeto de Autorizaci\u00f3n' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ). CATCH cx_salv_not_found. ENDTRY.
 
       lo_columns->set_optimize( abap_true ).
       lo_alv->display( ).

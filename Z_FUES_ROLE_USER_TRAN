@@ -78,36 +78,6 @@ SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01.
     SELECTION-SCREEN COMMENT 1(30) TEXT-r02 FOR FIELD rb_role.
     PARAMETERS: rb_role RADIOBUTTON GROUP rb1.
   SELECTION-SCREEN END OF LINE.
-  SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) TEXT-r03 FOR FIELD rb_trans.
-    PARAMETERS: rb_trans RADIOBUTTON GROUP rb1.
-  SELECTION-SCREEN END OF LINE.
-  SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) TEXT-r04 FOR FIELD rb_usrtrans.
-    PARAMETERS: rb_usrtrans RADIOBUTTON GROUP rb1.
-  SELECTION-SCREEN END OF LINE.
-  SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) TEXT-r05 FOR FIELD rb_usrtransauth.
-    PARAMETERS: rb_usrtransauth RADIOBUTTON GROUP rb1.
-  SELECTION-SCREEN END OF LINE.
-SELECTION-SCREEN END OF BLOCK blk1.
-
-SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02.
-  SELECT-OPTIONS:
-    s_role   FOR agr_define-agr_name,    " Selección de roles
-    s_user   FOR usr02-bname,            " Selección de usuarios
-    s_group  FOR usr02-class,            " Selección de grupos
-    s_tcode  FOR agr_tcodes-tcode,       " Selección de transacción
-    s_object FOR agr_1251-object,        " Selección de objeto de autorización
-    s_fdate  FOR agr_users-from_dat,     " Fecha desde
-    s_tdate  FOR agr_users-to_dat.       " Fecha hasta
-SELECTION-SCREEN END OF BLOCK blk2.
-
-SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE TEXT-b03.
-  PARAMETERS:
-    p_inact  AS CHECKBOX DEFAULT ' ',    " Incluir usuarios inactivos
-    p_rnousr AS CHECKBOX DEFAULT ' ',    " Incluir roles sin usuarios
-    p_unorol AS CHECKBOX DEFAULT ' '.    " Incluir usuarios sin roles
 SELECTION-SCREEN END OF BLOCK blk3.
 
 * Text Elements
@@ -117,6 +87,14 @@ SELECTION-SCREEN:
     COMMENT /1(78) TEXT-c02,
     COMMENT /1(78) TEXT-c03,
   END OF BLOCK blk4.
+
+AT SELECTION-SCREEN.
+  IF p_ruser = p_rnousr.
+    MESSAGE 'Select either "Only roles with users" or "Include roles without users", not both' TYPE 'E'.
+  ENDIF.
+  IF p_urole = p_unorol.
+    MESSAGE 'Select either "Only users with roles" or "Include users without roles", not both' TYPE 'E'.
+  ENDIF.
 
 * Main Processing
 START-OF-SELECTION.
@@ -328,15 +306,6 @@ ENDFORM.
 *&      Form  APPLY_USER_ROLE_FILTERS
 *&---------------------------------------------------------------------*
 FORM apply_user_role_filters.
-  " Exclude usuarios sin roles cuando la opción correspondiente no esté
-  " seleccionada
-  IF p_unorol = ' '.
-    DELETE gt_user_role WHERE user_id IS INITIAL OR roles_per_user = 0.
-  ENDIF.
-
-  " Exclude roles sin usuarios cuando la opción correspondiente no esté
-  " seleccionada
-  IF p_rnousr = ' '.
     DELETE gt_user_role WHERE role_name IS INITIAL OR users_per_role = 0.
   ENDIF.
 ENDFORM.

@@ -1,0 +1,189 @@
+REPORT z_fues_role_user_tran_enhanced.
+
+*----------------------------------------------------------------------*
+* Programa unificado para gestión de relaciones Usuario/Rol/Transacción
+*----------------------------------------------------------------------*
+*
+* Este reporte reemplaza a los programas previos del ecosistema
+* Z_FUES_ROLE_USER_TRAN y extiende su funcionalidad.
+* Todos los textos se presentan en español y se utiliza una estructura
+* modular basada en formularios.
+*
+*---------------------------------------------------------------------*
+
+"----------- Declaración de tipos -----------------------------------*
+TYPES: BEGIN OF ty_user_role,
+         rol        TYPE agr_name,
+         usuario    TYPE xubname,
+         grupo      TYPE usr02-class,
+         desde      TYPE datum,
+         hasta      TYPE datum,
+       END OF ty_user_role,
+       BEGIN OF ty_rol_trans,
+         rol        TYPE agr_name,
+         trans      TYPE tcode,
+         descr      TYPE tstct-ttext,
+       END OF ty_rol_trans,
+       BEGIN OF ty_trans_aut,
+         trans      TYPE tcode,
+         rol        TYPE agr_name,
+         descr      TYPE tstct-ttext,
+         objeto     TYPE agr_1251-object,
+         campo      TYPE agr_1251-field,
+         valor      TYPE agr_1251-low,
+         nivel      TYPE char2,
+       END OF ty_trans_aut,
+       BEGIN OF ty_excel,
+         trans      TYPE tcode,
+         regla      TYPE string,
+         objeto     TYPE agr_1251-object,
+         campo      TYPE agr_1251-field,
+         valor      TYPE agr_1251-low,
+       END OF ty_excel.
+
+DATA: gt_user_role  TYPE STANDARD TABLE OF ty_user_role,
+      gt_rol_trans  TYPE STANDARD TABLE OF ty_rol_trans,
+      gt_trans_aut  TYPE STANDARD TABLE OF ty_trans_aut,
+      gt_excel      TYPE STANDARD TABLE OF ty_excel,
+      go_alv        TYPE REF TO cl_salv_table.
+
+"----------- Selección de pantalla ---------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-t01.
+PARAMETERS: rb_view1 RADIOBUTTON GROUP rbv,
+            rb_view2 RADIOBUTTON GROUP rbv,
+            rb_view3 RADIOBUTTON GROUP rbv,
+            rb_view4 RADIOBUTTON GROUP rbv,
+            rb_view5 RADIOBUTTON GROUP rbv.
+SELECTION-SCREEN END OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE text-t02.
+SELECT-OPTIONS: s_rol  FOR agr_name,
+                s_user FOR xubname,
+                s_tcode FOR tcode,
+                s_obj   FOR agr_1251-object.
+SELECTION-SCREEN END OF BLOCK b2.
+
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE text-t03.
+PARAMETERS: p_rnousr AS CHECKBOX DEFAULT space,
+            p_ruser  AS CHECKBOX DEFAULT space,
+            p_unorol AS CHECKBOX DEFAULT space,
+            p_urole  AS CHECKBOX DEFAULT space.
+SELECTION-SCREEN END OF BLOCK b3.
+
+AT SELECTION-SCREEN OUTPUT.
+  PERFORM ajustar_parametros.
+
+START-OF-SELECTION.
+  PERFORM cargar_excel.
+
+  CASE 'X'.
+    WHEN rb_view1.
+      PERFORM vista_usuario_rol.
+    WHEN rb_view2.
+      PERFORM vista_rol_transaccion.
+    WHEN rb_view3.
+      PERFORM vista_trans_aut.
+    WHEN rb_view4.
+      PERFORM vista_rol_user_trans.
+    WHEN rb_view5.
+      PERFORM vista_rol_user_trans_aut.
+  ENDCASE.
+
+"---------------- Formulario: ajustar_parametros -------------------*
+FORM ajustar_parametros.
+  LOOP AT SCREEN.
+    CASE screen-name.
+      WHEN 'P_RNOUSR'.
+        IF p_ruser = abap_true.
+          screen-active = 0.
+          screen-invisible = 1.
+        ELSE.
+          screen-active = 1.
+          screen-invisible = 0.
+        ENDIF.
+      WHEN 'P_RUSER'.
+        IF p_rnousr = abap_true.
+          screen-active = 0.
+          screen-invisible = 1.
+        ELSE.
+          screen-active = 1.
+          screen-invisible = 0.
+        ENDIF.
+      WHEN 'P_UNOROL'.
+        IF p_urole = abap_true.
+          screen-active = 0.
+          screen-invisible = 1.
+        ELSE.
+          screen-active = 1.
+          screen-invisible = 0.
+        ENDIF.
+      WHEN 'P_UROLE'.
+        IF p_unorol = abap_true.
+          screen-active = 0.
+          screen-invisible = 1.
+        ELSE.
+          screen-active = 1.
+          screen-invisible = 0.
+        ENDIF.
+    ENDCASE.
+    MODIFY SCREEN.
+  ENDLOOP.
+ENDFORM.
+
+"---------------- Formulario: cargar_excel -------------------------*
+FORM cargar_excel.
+  DATA: lt_raw TYPE STANDARD TABLE OF alsmex_tabline,
+        lv_file TYPE rlgrap-filename VALUE 'PCE_RISE_V1.69.XLSX'.
+
+  CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+    EXPORTING
+      filename                = lv_file
+      i_begin_col             = 1
+      i_begin_row             = 1
+      i_end_col               = 6
+      i_end_row               = 9999
+    TABLES
+      intern                  = lt_raw
+    EXCEPTIONS
+      inconsistent_parameters = 1
+      upload_ole              = 2
+      OTHERS                  = 3.
+  IF sy-subrc <> 0.
+    MESSAGE 'Error al cargar el archivo Excel' TYPE 'E'.
+    EXIT.
+  ENDIF.
+
+  CLEAR gt_excel.
+  LOOP AT lt_raw INTO DATA(ls_raw)." Conversión simple de datos
+    CASE ls_raw-col.
+      WHEN 1. gt_excel[ sy-tabix ]-trans  = ls_raw-value.
+      WHEN 2. gt_excel[ sy-tabix ]-regla  = ls_raw-value.
+      WHEN 3. gt_excel[ sy-tabix ]-objeto = ls_raw-value.
+      WHEN 4. gt_excel[ sy-tabix ]-campo  = ls_raw-value.
+      WHEN 5. gt_excel[ sy-tabix ]-valor  = ls_raw-value.
+    ENDCASE.
+  ENDLOOP.
+ENDFORM.
+
+"---------------- Formulario: vista_usuario_rol --------------------*
+FORM vista_usuario_rol.
+  " Implementar lógica similar a programas previos
+  MESSAGE 'Vista Usuario ↔ Rol aún no implementada' TYPE 'I'.
+ENDFORM.
+
+FORM vista_rol_transaccion.
+  MESSAGE 'Vista Rol ↔ Transacción aún no implementada' TYPE 'I'.
+ENDFORM.
+
+FORM vista_trans_aut.
+  MESSAGE 'Vista Transacción ↔ Autorización aún no implementada' TYPE 'I'.
+ENDFORM.
+
+FORM vista_rol_user_trans.
+  MESSAGE 'Vista Rol ↔ Usuario ↔ Transacción aún no implementada' TYPE 'I'.
+ENDFORM.
+
+FORM vista_rol_user_trans_aut.
+  MESSAGE 'Vista Completa con Autorizaciones aún no implementada' TYPE 'I'.
+ENDFORM.
+

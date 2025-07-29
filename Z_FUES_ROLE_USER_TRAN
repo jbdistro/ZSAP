@@ -1,9 +1,9 @@
 REPORT z_integrated_user_role_management.
 
-* Data Declarations
+* Declaraciones de datos
 TABLES: agr_define, agr_users, usr02, agr_tcodes, agr_1251.
 
-* Structure for User-Role relationships
+* Estructura de relaciones Usuario-Rol
 TYPES: BEGIN OF ty_user_role,
          role_name     TYPE agr_define-agr_name,
          user_id       TYPE xubname,
@@ -17,14 +17,14 @@ TYPES: BEGIN OF ty_user_role,
          status        TYPE string,
        END OF ty_user_role.
 
-* Structure for Role-Transaction relationships
+* Estructura de relaciones Rol-Transacción
 TYPES: BEGIN OF ty_role_transaction,
          role_name     TYPE agr_define-agr_name,
          transaction   TYPE tcode,
          description   TYPE tstct-ttext,
        END OF ty_role_transaction.
 
-* Structure for Transaction-Authorization relationships
+* Estructura de relaciones Transacción-Autorización
 TYPES: BEGIN OF ty_transaction_auth,
          transaction   TYPE tcode,
          role_name     TYPE agr_define-agr_name,
@@ -53,13 +53,13 @@ TYPES: BEGIN OF ty_user_role_trans_auth,
          auth_value   TYPE agr_1251-low,
        END OF ty_user_role_trans_auth.
 
-* Structure for summary information
+* Estructura para resumen
 TYPES: BEGIN OF ty_summary,
          description TYPE string,
          value       TYPE string,
        END OF ty_summary.
 
-* Data declarations
+* Declaraciones de datos
 DATA: gt_user_role       TYPE TABLE OF ty_user_role,
       gt_role_transaction TYPE TABLE OF ty_role_transaction,
       gt_transaction_auth TYPE TABLE OF ty_transaction_auth,
@@ -347,9 +347,9 @@ ENDFORM.
 FORM add_status_column.
   LOOP AT gt_user_role ASSIGNING FIELD-SYMBOL(<ls_row>).
     IF <ls_row>-user_inactive = 'X' OR <ls_row>-role_inactive = 'X'.
-      <ls_row>-status = 'Inactive'.
+      <ls_row>-status = 'Inactivo'.
     ELSE.
-      <ls_row>-status = 'Active'.
+      <ls_row>-status = 'Activo'.
     ENDIF.
   ENDLOOP.
 ENDFORM.

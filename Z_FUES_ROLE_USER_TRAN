@@ -78,6 +78,50 @@ DATA: gt_user_role       TYPE TABLE OF ty_user_role,
       gt_summary          TYPE TABLE OF ty_summary,
       lo_alv              TYPE REF TO cl_salv_table.
 
+*----------------------------------------------------------------------*
+*       Clase principal
+*----------------------------------------------------------------------*
+CLASS lcl_main DEFINITION.
+  PUBLIC SECTION.
+    METHODS: run,
+             user_role_tab,
+             role_trans_tab,
+             trans_auth_tab.
+ENDCLASS.
+
+CLASS lcl_main IMPLEMENTATION.
+  METHOD run.
+    CASE 'X'.
+      WHEN rb_user.
+        user_role_tab( ).
+      WHEN rb_role.
+        role_trans_tab( ).
+      WHEN rb_trans.
+        trans_auth_tab( ).
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD user_role_tab.
+    PERFORM process_user_role_view.
+  ENDMETHOD.
+
+  METHOD role_trans_tab.
+    IF p_rt_usr = 'X'.
+      PERFORM process_user_role_trans_view.
+    ELSE.
+      PERFORM process_role_transaction_view.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD trans_auth_tab.
+    IF p_ta_usr = 'X'.
+      PERFORM process_user_role_trans_auth_view.
+    ELSE.
+      PERFORM process_transaction_auth_view.
+    ENDIF.
+  ENDMETHOD.
+ENDCLASS.
+
 * Selection Screen
 SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01.
   SELECTION-SCREEN BEGIN OF LINE.
@@ -92,14 +136,6 @@ SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01.
     SELECTION-SCREEN COMMENT 1(30) TEXT-r03 FOR FIELD rb_trans.
     PARAMETERS: rb_trans RADIOBUTTON GROUP rb1.
   SELECTION-SCREEN END OF LINE.
-  SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) TEXT-r04 FOR FIELD rb_urtrans.
-    PARAMETERS: rb_urtrans RADIOBUTTON GROUP rb1.
-  SELECTION-SCREEN END OF LINE.
-  SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) TEXT-r05 FOR FIELD rb_urtrauth.
-    PARAMETERS: rb_urtrauth RADIOBUTTON GROUP rb1.
-  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK blk1.
 
 SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02.
@@ -111,7 +147,6 @@ SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02.
     s_object FOR agr_1251-object,        " Authorization object selection
     s_fdate  FOR agr_users-from_dat,     " From date selection
     s_tdate  FOR agr_users-to_dat.       " To date selection
-  PARAMETERS p_xlfile TYPE rlgrap-filename DEFAULT 'PCE_RISE_V1.69.XLSX'.
 SELECTION-SCREEN END OF BLOCK blk2.
 
 SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE TEXT-b03.
@@ -122,7 +157,9 @@ SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE TEXT-b03.
     p_rnousr  AS CHECKBOX USER-COMMAND rusr MODIF ID rusr,  "Roles sin usuarios
     p_user_flt AS CHECKBOX DEFAULT ' ' USER-COMMAND upd,    "Activar filtro de usuarios
     p_urole   AS CHECKBOX USER-COMMAND urol MODIF ID urol,  "Solo usuarios con roles
-    p_unorol  AS CHECKBOX USER-COMMAND urol MODIF ID urol.  "Usuarios sin roles
+    p_unorol  AS CHECKBOX USER-COMMAND urol MODIF ID urol,  "Usuarios sin roles
+    p_rt_usr  AS CHECKBOX DEFAULT ' ' ,                     "Añadir usuario en Rol-Transacción
+    p_ta_usr  AS CHECKBOX DEFAULT ' '.                      "Añadir usuario en Rol-Trans-Aut
 SELECTION-SCREEN END OF BLOCK blk3.
 
 * Text Elements
@@ -189,18 +226,8 @@ AT SELECTION-SCREEN OUTPUT.
 
 * Main Processing
 START-OF-SELECTION.
-  CASE 'X'.
-    WHEN rb_user.
-      PERFORM process_user_role_view.
-    WHEN rb_role.
-      PERFORM process_role_transaction_view.
-    WHEN rb_trans.
-      PERFORM process_transaction_auth_view.
-    WHEN rb_urtrans.
-      PERFORM process_user_role_trans_view.
-    WHEN rb_urtrauth.
-      PERFORM process_user_role_trans_auth_view.
-  ENDCASE.
+  DATA(lo_main) = NEW lcl_main( ).
+  lo_main->run( ).
 
 *&---------------------------------------------------------------------*
 *&      Form  PROCESS_USER_ROLE_VIEW
@@ -266,7 +293,8 @@ FORM get_user_role_data.
       AND ( @p_inact = 'X' OR
             u~gltgv >= @lv_current_date OR
             u~gltgv = '00000000' )
-    INTO CORRESPONDING FIELDS OF TABLE @lt_temp.
+    INTO CORRESPONDING FIELDS OF TABLE @lt_temp
+    UP TO 10000 ROWS.
 
   " Initialize calculated fields
   LOOP AT lt_temp ASSIGNING FIELD-SYMBOL(<fs_temp>).
@@ -292,7 +320,8 @@ FORM add_roles_without_users.
       LEFT JOIN agr_users AS r ON a~agr_name = r~agr_name
       WHERE a~agr_name IN @s_role
         AND r~uname IS NULL
-      INTO TABLE @DATA(lt_roles_no_user).
+      INTO TABLE @DATA(lt_roles_no_user)
+      UP TO 10000 ROWS.
 
     LOOP AT lt_roles_no_user ASSIGNING FIELD-SYMBOL(<ls_role>).
       APPEND VALUE #(
@@ -318,7 +347,8 @@ FORM add_users_without_roles.
       WHERE u~bname IN @s_user
         AND u~class IN @s_group
         AND r~uname IS NULL
-      INTO TABLE @DATA(lt_users_no_role).
+      INTO TABLE @DATA(lt_users_no_role)
+      UP TO 10000 ROWS.
 
     LOOP AT lt_users_no_role ASSIGNING FIELD-SYMBOL(<ls_user>).
       DATA(lv_user_inactive) = COND #(
@@ -477,7 +507,8 @@ FORM get_role_transaction_data.
       ON t~tcode = s~tcode AND s~sprsl = @sy-langu
     WHERE a~agr_name IN @s_role
       AND t~tcode    IN @s_tcode
-    INTO TABLE @gt_role_transaction.
+    INTO TABLE @gt_role_transaction
+    UP TO 10000 ROWS.
 
   IF sy-subrc <> 0.
     MESSAGE 'No se encontraron transacciones para los roles seleccionados' TYPE 'I' DISPLAY LIKE 'E'.
@@ -505,7 +536,8 @@ FORM get_transaction_auth_data.
     WHERE t~tcode    IN @s_tcode
       AND a~agr_name IN @s_role
       AND au~object  IN @s_object
-    INTO TABLE @gt_transaction_auth.
+    INTO TABLE @gt_transaction_auth
+    UP TO 10000 ROWS.
 
   IF sy-subrc <> 0.
     MESSAGE 'No se encontraron autorizaciones para las transacciones seleccionadas' TYPE 'I' DISPLAY LIKE 'E'.
@@ -664,36 +696,10 @@ ENDFORM.
 *&      Form  LOAD_AUTH_LEVEL_MAPPING
 *&---------------------------------------------------------------------*
 FORM load_auth_level_mapping.
-  DATA: lo_xl TYPE REF TO cl_fdt_xl_spreadsheet,
-        lv_xstring TYPE xstring.
   CLEAR gt_auth_level.
-  TRY.
-      " Cargar archivo Excel desde el servidor
-      OPEN DATASET p_xlfile FOR INPUT IN BINARY MODE.
-      IF sy-subrc = 0.
-        DO.
-          READ DATASET p_xlfile INTO lv_xstring LENGTH 65535.
-          IF sy-subrc <> 0. EXIT. ENDIF.
-          APPEND lv_xstring TO DATA(lt_raw).
-        ENDDO.
-        CLOSE DATASET p_xlfile.
-        lv_xstring = cl_bcs_convert=>solix_to_xstring( lt_raw ).
-        CREATE OBJECT lo_xl
-          EXPORTING
-            document = lv_xstring.
-        DATA(lt_table) = lo_xl->if_fdt_doc_spreadsheet~get_itab_from_worksheet( 1 ).
-        LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<ls_row>).
-          IF sy-tabix = 1. CONTINUE. ENDIF.
-          APPEND VALUE ty_auth_level(
-            object      = <ls_row>-col2
-            field       = <ls_row>-col3
-            value       = <ls_row>-col4
-            nivel       = <ls_row>-col1
-            descripcion = <ls_row>-col5 ) TO gt_auth_level.
-        ENDLOOP.
-      ENDIF.
-    CATCH cx_root.
-  ENDTRY.
+  SELECT object field value nivel descripcion
+    FROM zacc_level_map
+    INTO TABLE @gt_auth_level.
 ENDFORM.
 
 *&---------------------------------------------------------------------*
@@ -711,7 +717,8 @@ FORM get_user_role_trans_data.
     WHERE a~agr_name IN @s_role
       AND r~uname IN @s_user
       AND t~tcode IN @s_tcode
-    INTO TABLE @gt_user_role_trans.
+    INTO TABLE @gt_user_role_trans
+    UP TO 10000 ROWS.
 ENDFORM.
 
 *&---------------------------------------------------------------------*
@@ -734,7 +741,8 @@ FORM get_user_role_trans_auth_data.
       AND r~uname IN @s_user
       AND t~tcode IN @s_tcode
       AND au~object IN @s_object
-    INTO TABLE @gt_user_role_trans_auth.
+    INTO TABLE @gt_user_role_trans_auth
+    UP TO 10000 ROWS.
 
   LOOP AT gt_user_role_trans_auth ASSIGNING FIELD-SYMBOL(<ls_row>).
     READ TABLE gt_auth_level INTO DATA(ls_lvl)
@@ -803,3 +811,5 @@ ENDFORM.
 * TEXT-r03: 'Rol ↔ Transacción ↔ Autorización'
 * TEXT-r04: 'Rol/Usuario ↔ Transacción'
 * TEXT-r05: 'Rol/Usuario ↔ Transacción ↔ Autorización'
+* TEXT-u01: 'Añadir usuario en Rol-Transacción'
+* TEXT-u02: 'Añadir usuario en Rol-Trans-Autorización'

@@ -33,6 +33,35 @@ TYPES: BEGIN OF ty_transaction_auth,
          auth_value    TYPE agr_1251-low,
        END OF ty_transaction_auth.
 
+* Estructura para relaciones Usuario/Rol-Transacción
+TYPES: BEGIN OF ty_user_role_trans,
+         user_id     TYPE xubname,
+         role_name   TYPE agr_define-agr_name,
+         transaction TYPE tcode,
+         description TYPE tstct-ttext,
+       END OF ty_user_role_trans.
+
+* Estructura para relaciones Usuario/Rol-Transacción-Autorización
+TYPES: BEGIN OF ty_user_role_trans_auth,
+         user_id      TYPE xubname,
+         role_name    TYPE agr_define-agr_name,
+         transaction  TYPE tcode,
+         description  TYPE tstct-ttext,
+         auth_object  TYPE agr_1251-object,
+         auth_field   TYPE agr_1251-field,
+         auth_value   TYPE agr_1251-low,
+         nivel        TYPE char2,
+       END OF ty_user_role_trans_auth.
+
+* Estructura para la clasificación de autorizaciones
+TYPES: BEGIN OF ty_auth_level,
+         object       TYPE agr_1251-object,
+         field        TYPE agr_1251-field,
+         value        TYPE agr_1251-low,
+         nivel        TYPE char2,
+         descripcion  TYPE string,
+       END OF ty_auth_level.
+
 * Structure for summary information
 TYPES: BEGIN OF ty_summary,
          description TYPE string,
@@ -43,6 +72,9 @@ TYPES: BEGIN OF ty_summary,
 DATA: gt_user_role       TYPE TABLE OF ty_user_role,
       gt_role_transaction TYPE TABLE OF ty_role_transaction,
       gt_transaction_auth TYPE TABLE OF ty_transaction_auth,
+      gt_user_role_trans TYPE TABLE OF ty_user_role_trans,
+      gt_user_role_trans_auth TYPE TABLE OF ty_user_role_trans_auth,
+      gt_auth_level     TYPE TABLE OF ty_auth_level,
       gt_summary          TYPE TABLE OF ty_summary,
       lo_alv              TYPE REF TO cl_salv_table.
 
@@ -60,6 +92,14 @@ SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01.
     SELECTION-SCREEN COMMENT 1(30) TEXT-r03 FOR FIELD rb_trans.
     PARAMETERS: rb_trans RADIOBUTTON GROUP rb1.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) TEXT-r04 FOR FIELD rb_urtrans.
+    PARAMETERS: rb_urtrans RADIOBUTTON GROUP rb1.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) TEXT-r05 FOR FIELD rb_urtrauth.
+    PARAMETERS: rb_urtrauth RADIOBUTTON GROUP rb1.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK blk1.
 
 SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02.
@@ -71,15 +111,18 @@ SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02.
     s_object FOR agr_1251-object,        " Authorization object selection
     s_fdate  FOR agr_users-from_dat,     " From date selection
     s_tdate  FOR agr_users-to_dat.       " To date selection
+  PARAMETERS p_xlfile TYPE rlgrap-filename DEFAULT 'PCE_RISE_V1.69.XLSX'.
 SELECTION-SCREEN END OF BLOCK blk2.
 
 SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE TEXT-b03.
   PARAMETERS:
-    p_inact  AS CHECKBOX DEFAULT ' ',    " Include inactive users
-    p_urole  AS CHECKBOX DEFAULT 'X',    " Only users with roles
-    p_ruser  AS CHECKBOX DEFAULT 'X',    " Only roles with users
-    p_rnousr AS CHECKBOX DEFAULT ' ',    " Include roles without users
-    p_unorol AS CHECKBOX DEFAULT ' '.    " Include users without roles
+    p_inact  AS CHECKBOX DEFAULT ' ',                       "Incluir usuarios inactivos
+    p_role_flt AS CHECKBOX DEFAULT ' ' USER-COMMAND upd,    "Activar filtro de roles
+    p_ruser   RADIOBUTTON GROUP r_role DEFAULT 'X',         "Solo roles con usuarios
+    p_rnousr  RADIOBUTTON GROUP r_role,                     "Roles sin usuarios
+    p_user_flt AS CHECKBOX DEFAULT ' ' USER-COMMAND upd,    "Activar filtro de usuarios
+    p_urole   RADIOBUTTON GROUP r_user DEFAULT 'X',          "Solo usuarios con roles
+    p_unorol  RADIOBUTTON GROUP r_user.                     "Usuarios sin roles
 SELECTION-SCREEN END OF BLOCK blk3.
 
 * Text Elements
@@ -90,6 +133,30 @@ SELECTION-SCREEN:
     COMMENT /1(78) TEXT-c03,
   END OF BLOCK blk4.
 
+AT SELECTION-SCREEN OUTPUT.
+  LOOP AT SCREEN.
+    CASE screen-name.
+      WHEN 'P_RUSER' OR 'P_RNOUSR'.
+        IF p_role_flt = ' '.
+          screen-active = 0.
+          screen-invisible = 1.
+        ELSE.
+          screen-active = 1.
+          screen-invisible = 0.
+        ENDIF.
+        MODIFY SCREEN.
+      WHEN 'P_UROLE' OR 'P_UNOROL'.
+        IF p_user_flt = ' '.
+          screen-active = 0.
+          screen-invisible = 1.
+        ELSE.
+          screen-active = 1.
+          screen-invisible = 0.
+        ENDIF.
+        MODIFY SCREEN.
+    ENDCASE.
+  ENDLOOP.
+
 * Main Processing
 START-OF-SELECTION.
   CASE 'X'.
@@ -99,6 +166,10 @@ START-OF-SELECTION.
       PERFORM process_role_transaction_view.
     WHEN rb_trans.
       PERFORM process_transaction_auth_view.
+    WHEN rb_urtrans.
+      PERFORM process_user_role_trans_view.
+    WHEN rb_urtrauth.
+      PERFORM process_user_role_trans_auth_view.
   ENDCASE.
 
 *&---------------------------------------------------------------------*
@@ -174,8 +245,9 @@ FORM get_user_role_data.
   ENDLOOP.
 
   gt_user_role = lt_temp.
-  IF sy-subrc <> 0 AND p_rnousr = ' ' AND p_unorol = ' '.
-    MESSAGE 'No users found for the selected criteria' TYPE 'I' DISPLAY LIKE 'E'.
+  IF sy-subrc <> 0 AND ( p_role_flt = 'X' AND p_rnousr = ' ' )
+                     AND ( p_user_flt = 'X' AND p_unorol = ' ' ).
+    MESSAGE 'No se encontraron usuarios para los criterios seleccionados' TYPE 'I' DISPLAY LIKE 'E'.
     LEAVE LIST-PROCESSING.
   ENDIF.
 ENDFORM.
@@ -184,7 +256,7 @@ ENDFORM.
 *&      Form  ADD_ROLES_WITHOUT_USERS
 *&---------------------------------------------------------------------*
 FORM add_roles_without_users.
-  IF p_rnousr = 'X'.
+  IF p_role_flt = 'X' AND p_rnousr = 'X'.
     SELECT a~agr_name
       FROM agr_define AS a
       LEFT JOIN agr_users AS r ON a~agr_name = r~agr_name
@@ -209,7 +281,7 @@ FORM add_users_without_roles.
   DATA: lv_current_date TYPE datum.
   lv_current_date = sy-datum.
 
-  IF p_unorol = 'X'.
+  IF p_user_flt = 'X' AND p_unorol = 'X'.
     SELECT u~bname, u~class, u~gltgv
       FROM usr02 AS u
       LEFT JOIN agr_users AS r ON u~bname = r~uname
@@ -279,10 +351,10 @@ ENDFORM.
 *&      Form  APPLY_USER_ROLE_FILTERS
 *&---------------------------------------------------------------------*
 FORM apply_user_role_filters.
-  IF p_urole = 'X'.
+  IF p_user_flt = 'X' AND p_urole = 'X'.
     DELETE gt_user_role WHERE user_id IS INITIAL OR roles_per_user = 0.
   ENDIF.
-  IF p_ruser = 'X'.
+  IF p_role_flt = 'X' AND p_ruser = 'X'.
     DELETE gt_user_role WHERE role_name IS INITIAL OR users_per_role = 0.
   ENDIF.
 ENDFORM.
@@ -353,12 +425,12 @@ FORM build_user_role_summary.
 
   " Build summary
   CLEAR gt_summary.
-  APPEND VALUE #( description = 'Total Users'       value = |{ lv_users }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Total Roles'       value = |{ lv_roles }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Inactive Users'    value = |{ lv_inactive_users }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Inactive Roles'    value = |{ lv_inactive_roles }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Users Without Roles' value = |{ lv_users_no_role }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Roles Without Users' value = |{ lv_roles_no_user }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Total Usuarios'         value = |{ lv_users }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Total Roles'            value = |{ lv_roles }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios Inactivos'     value = |{ lv_inactive_users }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Roles Inactivos'        value = |{ lv_inactive_roles }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios sin Rol'       value = |{ lv_users_no_role }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Roles sin Usuario'      value = |{ lv_roles_no_user }| ) TO gt_summary.
 ENDFORM.
 
 *&---------------------------------------------------------------------*
@@ -378,7 +450,7 @@ FORM get_role_transaction_data.
     INTO TABLE @gt_role_transaction.
 
   IF sy-subrc <> 0.
-    MESSAGE 'No transactions found for the selected roles' TYPE 'I' DISPLAY LIKE 'E'.
+    MESSAGE 'No se encontraron transacciones para los roles seleccionados' TYPE 'I' DISPLAY LIKE 'E'.
     LEAVE LIST-PROCESSING.
   ENDIF.
 ENDFORM.
@@ -406,7 +478,7 @@ FORM get_transaction_auth_data.
     INTO TABLE @gt_transaction_auth.
 
   IF sy-subrc <> 0.
-    MESSAGE 'No authorizations found for the selected transactions' TYPE 'I' DISPLAY LIKE 'E'.
+    MESSAGE 'No se encontraron autorizaciones para las transacciones seleccionadas' TYPE 'I' DISPLAY LIKE 'E'.
     LEAVE LIST-PROCESSING.
   ENDIF.
 
@@ -429,7 +501,7 @@ FORM display_user_role_alv.
       lo_grid->create_header_information(
         row    = 1
         column = 1
-        text   = 'USER-ROLE RELATIONSHIP REPORT' ).
+        text   = 'REPORTE RELACIÓN ROL-USUARIO' ).
 
       " Add summary
       DATA: lv_row TYPE i VALUE 2.
@@ -446,15 +518,15 @@ FORM display_user_role_alv.
       lo_functions->set_all( abap_true ).
 
       " Set column headers
-      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Role' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'USER_ID' )->set_medium_text( 'User' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'USER_GROUP' )->set_medium_text( 'Group' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'FROM_DATE' )->set_medium_text( 'From Date' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'TO_DATE' )->set_medium_text( 'To Date' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'ROLE_INACTIVE' )->set_medium_text( 'Role Inactive' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'ROLES_PER_USER' )->set_medium_text( 'Roles per User' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'USERS_PER_ROLE' )->set_medium_text( 'Users per Role' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'USER_INACTIVE' )->set_medium_text( 'User Inactive' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Rol' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USER_ID' )->set_medium_text( 'Usuario' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USER_GROUP' )->set_medium_text( 'Grupo' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'FROM_DATE' )->set_medium_text( 'Desde' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'TO_DATE' )->set_medium_text( 'Hasta' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_INACTIVE' )->set_medium_text( 'Rol Inactivo' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLES_PER_USER' )->set_medium_text( 'Roles por Usuario' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USERS_PER_ROLE' )->set_medium_text( 'Usuarios por Rol' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USER_INACTIVE' )->set_medium_text( 'Usuario Inactivo' ). CATCH cx_salv_not_found. ENDTRY.
 
       lo_columns->set_optimize( abap_true ).
       lo_alv->display( ).
@@ -480,7 +552,7 @@ FORM display_role_trans_alv.
       lo_grid->create_header_information(
         row    = 1
         column = 1
-        text   = 'ROLE-TRANSACTION RELATIONSHIP REPORT' ).
+        text   = 'REPORTE RELACIÓN ROL-TRANSACCIÓN' ).
       lo_alv->set_top_of_list( lo_grid ).
 
       " Configure columns
@@ -489,9 +561,9 @@ FORM display_role_trans_alv.
       lo_functions->set_all( abap_true ).
 
       " Set column headers
-      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Role Name' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transaction' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Description' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Rol' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transacción' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Descripción' ). CATCH cx_salv_not_found. ENDTRY.
 
       lo_columns->set_optimize( abap_true ).
       lo_alv->display( ).
@@ -517,7 +589,7 @@ FORM display_trans_auth_alv.
       lo_grid->create_header_information(
         row    = 1
         column = 1
-        text   = 'TRANSACTION-AUTHORIZATION RELATIONSHIP REPORT' ).
+        text   = 'REPORTE TRANSACCIÓN-AUTORIZACIÓN' ).
       lo_alv->set_top_of_list( lo_grid ).
 
       " Configure columns
@@ -526,12 +598,12 @@ FORM display_trans_auth_alv.
       lo_functions->set_all( abap_true ).
 
       " Set column headers
-      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transaction' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Role/Auth' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Description' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'AUTH_OBJECT' )->set_medium_text( 'Auth Object' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'AUTH_FIELD' )->set_medium_text( 'Auth Field' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_columns->get_column( 'AUTH_VALUE' )->set_medium_text( 'Auth Value' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transacción' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Rol/Auth' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Descripción' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_OBJECT' )->set_medium_text( 'Obj.Aut.' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ). CATCH cx_salv_not_found. ENDTRY.
 
       lo_columns->set_optimize( abap_true ).
       lo_alv->display( ).
@@ -540,3 +612,164 @@ FORM display_trans_auth_alv.
       MESSAGE lx_msg->get_text( ) TYPE 'E'.
   ENDTRY.
 ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  PROCESS_USER_ROLE_TRANS_VIEW
+*&---------------------------------------------------------------------*
+FORM process_user_role_trans_view.
+  PERFORM get_user_role_trans_data.
+  PERFORM display_user_role_trans_alv.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  PROCESS_USER_ROLE_TRANS_AUTH_VIEW
+*&---------------------------------------------------------------------*
+FORM process_user_role_trans_auth_view.
+  PERFORM load_auth_level_mapping.
+  PERFORM get_user_role_trans_auth_data.
+  PERFORM display_user_role_trans_auth_alv.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  LOAD_AUTH_LEVEL_MAPPING
+*&---------------------------------------------------------------------*
+FORM load_auth_level_mapping.
+  DATA: lo_xl TYPE REF TO cl_fdt_xl_spreadsheet,
+        lv_xstring TYPE xstring.
+  CLEAR gt_auth_level.
+  TRY.
+      " Cargar archivo Excel desde el servidor
+      OPEN DATASET p_xlfile FOR INPUT IN BINARY MODE.
+      IF sy-subrc = 0.
+        DO.
+          READ DATASET p_xlfile INTO lv_xstring LENGTH 65535.
+          IF sy-subrc <> 0. EXIT. ENDIF.
+          APPEND lv_xstring TO DATA(lt_raw).
+        ENDDO.
+        CLOSE DATASET p_xlfile.
+        lv_xstring = cl_bcs_convert=>solix_to_xstring( lt_raw ).
+        CREATE OBJECT lo_xl
+          EXPORTING
+            document = lv_xstring.
+        DATA(lt_table) = lo_xl->if_fdt_doc_spreadsheet~get_itab_from_worksheet( 1 ).
+        LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<ls_row>).
+          IF sy-tabix = 1. CONTINUE. ENDIF.
+          APPEND VALUE ty_auth_level(
+            object      = <ls_row>-col2
+            field       = <ls_row>-col3
+            value       = <ls_row>-col4
+            nivel       = <ls_row>-col1
+            descripcion = <ls_row>-col5 ) TO gt_auth_level.
+        ENDLOOP.
+      ENDIF.
+    CATCH cx_root.
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_USER_ROLE_TRANS_DATA
+*&---------------------------------------------------------------------*
+FORM get_user_role_trans_data.
+  SELECT r~uname AS user_id
+         a~agr_name AS role_name
+         t~tcode AS transaction
+         s~ttext AS description
+    FROM agr_users AS r
+    INNER JOIN agr_define AS a ON a~agr_name = r~agr_name
+    INNER JOIN agr_tcodes AS t ON t~agr_name = a~agr_name
+    LEFT JOIN tstct AS s ON s~tcode = t~tcode AND s~sprsl = @sy-langu
+    WHERE a~agr_name IN @s_role
+      AND r~uname IN @s_user
+      AND t~tcode IN @s_tcode
+    INTO TABLE @gt_user_role_trans.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_USER_ROLE_TRANS_AUTH_DATA
+*&---------------------------------------------------------------------*
+FORM get_user_role_trans_auth_data.
+  SELECT r~uname AS user_id
+         a~agr_name AS role_name
+         t~tcode AS transaction
+         s~ttext AS description
+         au~object AS auth_object
+         au~field  AS auth_field
+         au~low    AS auth_value
+    FROM agr_users AS r
+    INNER JOIN agr_define AS a ON a~agr_name = r~agr_name
+    INNER JOIN agr_tcodes AS t ON t~agr_name = a~agr_name
+    LEFT JOIN tstct AS s ON s~tcode = t~tcode AND s~sprsl = @sy-langu
+    LEFT JOIN agr_1251 AS au ON au~agr_name = a~agr_name
+    WHERE a~agr_name IN @s_role
+      AND r~uname IN @s_user
+      AND t~tcode IN @s_tcode
+      AND au~object IN @s_object
+    INTO TABLE @gt_user_role_trans_auth.
+
+  LOOP AT gt_user_role_trans_auth ASSIGNING FIELD-SYMBOL(<ls_row>).
+    READ TABLE gt_auth_level INTO DATA(ls_lvl)
+         WITH KEY object = <ls_row>-auth_object
+                  field  = <ls_row>-auth_field
+                  value  = <ls_row>-auth_value.
+    IF sy-subrc = 0.
+      <ls_row>-nivel = ls_lvl-nivel.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_USER_ROLE_TRANS_ALV
+*&---------------------------------------------------------------------*
+FORM display_user_role_trans_alv.
+  TRY.
+      cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_user_role_trans ).
+      DATA(lo_columns) = lo_alv->get_columns( ).
+      DATA(lo_functions) = lo_alv->get_functions( ).
+      lo_functions->set_all( abap_true ).
+      TRY. lo_columns->get_column( 'USER_ID' )->set_medium_text( 'Usuario' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Rol' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transacción' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Descripción' ). CATCH cx_salv_not_found. ENDTRY.
+      lo_columns->set_optimize( abap_true ).
+      lo_alv->display( ).
+    CATCH cx_salv_msg INTO DATA(lx_msg).
+      MESSAGE lx_msg->get_text( ) TYPE 'E'.
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_USER_ROLE_TRANS_AUTH_ALV
+*&---------------------------------------------------------------------*
+FORM display_user_role_trans_auth_alv.
+  TRY.
+      cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_user_role_trans_auth ).
+      DATA(lo_columns) = lo_alv->get_columns( ).
+      DATA(lo_functions) = lo_alv->get_functions( ).
+      lo_functions->set_all( abap_true ).
+      TRY. lo_columns->get_column( 'USER_ID' )->set_medium_text( 'Usuario' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Rol' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transacción' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Descripción' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_OBJECT' )->set_medium_text( 'Obj.Aut.' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'NIVEL' )->set_medium_text( 'Nivel' ). CATCH cx_salv_not_found. ENDTRY.
+      lo_columns->set_optimize( abap_true ).
+      lo_alv->display( ).
+    CATCH cx_salv_msg INTO lx_msg.
+      MESSAGE lx_msg->get_text( ) TYPE 'E'.
+  ENDTRY.
+ENDFORM.
+* Textos
+* TEXT-b01: 'Vista de reportes'
+* TEXT-b02: 'Selección de datos'
+* TEXT-b03: 'Opciones'
+* TEXT-b04: 'Información'
+* TEXT-c01: 'Relación de roles, usuarios y transacciones'
+* TEXT-c02: 'Seleccione filtros según necesidad'
+* TEXT-c03: 'Resultados mostrados en ALV'
+* TEXT-r01: 'Rol ↔ Usuario'
+* TEXT-r02: 'Rol ↔ Transacción'
+* TEXT-r03: 'Rol ↔ Transacción ↔ Autorización'
+* TEXT-r04: 'Rol/Usuario ↔ Transacción'
+* TEXT-r05: 'Rol/Usuario ↔ Transacción ↔ Autorización'

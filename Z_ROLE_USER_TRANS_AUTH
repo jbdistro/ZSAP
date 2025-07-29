@@ -1,0 +1,51 @@
+REPORT z_role_user_trans_auth.
+
+TABLES: agr_define, agr_users, agr_tcodes, tstct, agr_1251.
+
+TYPES: BEGIN OF ty_output,
+         usuario TYPE xubname,
+         rol     TYPE agr_define-agr_name,
+         trans   TYPE tcode,
+         descr   TYPE tstct-ttext,
+         objeto  TYPE agr_1251-object,
+         campo   TYPE agr_1251-field,
+         valor   TYPE agr_1251-low,
+       END OF ty_output.
+
+DATA: gt_output TYPE TABLE OF ty_output,
+      lo_alv    TYPE REF TO cl_salv_table.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-t01.
+SELECT-OPTIONS: s_user   FOR agr_users-uname,
+                s_role   FOR agr_define-agr_name,
+                s_tcode  FOR agr_tcodes-tcode,
+                s_object FOR agr_1251-object.
+SELECTION-SCREEN END OF BLOCK b1.
+
+START-OF-SELECTION.
+  SELECT r~uname  AS usuario,
+         a~agr_name AS rol,
+         t~tcode  AS trans,
+         s~ttext  AS descr,
+         au~object AS objeto,
+         au~field  AS campo,
+         au~low    AS valor
+    FROM agr_users AS r
+    INNER JOIN agr_define AS a ON r~agr_name = a~agr_name
+    INNER JOIN agr_tcodes AS t ON a~agr_name = t~agr_name
+    LEFT JOIN tstct AS s ON s~sprsl = @sy-langu AND s~tcode = t~tcode
+    LEFT JOIN agr_1251 AS au ON au~agr_name = a~agr_name
+    WHERE r~uname  IN @s_user
+      AND a~agr_name IN @s_role
+      AND t~tcode  IN @s_tcode
+      AND au~object IN @s_object
+    INTO TABLE @gt_output.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'No se encontraron datos' TYPE 'I'.
+    LEAVE LIST-PROCESSING.
+  ENDIF.
+
+  cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv
+                          CHANGING  t_table      = gt_output ).
+  lo_alv->display( ).

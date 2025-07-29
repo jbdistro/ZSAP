@@ -1,0 +1,542 @@
+REPORT z_integrated_user_role_management.
+
+* Data Declarations
+TABLES: agr_define, agr_users, usr02, agr_tcodes, agr_1251.
+
+* Structure for User-Role relationships
+TYPES: BEGIN OF ty_user_role,
+         role_name     TYPE agr_define-agr_name,
+         user_id       TYPE xubname,
+         user_group    TYPE usr02-class,
+         from_date     TYPE datum,
+         to_date       TYPE datum,
+         role_inactive TYPE c LENGTH 1,
+         roles_per_user TYPE i,
+         users_per_role TYPE i,
+         user_inactive TYPE c LENGTH 1,
+       END OF ty_user_role.
+
+* Structure for Role-Transaction relationships
+TYPES: BEGIN OF ty_role_transaction,
+         role_name     TYPE agr_define-agr_name,
+         transaction   TYPE tcode,
+         description   TYPE tstct-ttext,
+       END OF ty_role_transaction.
+
+* Structure for Transaction-Authorization relationships
+TYPES: BEGIN OF ty_transaction_auth,
+         transaction   TYPE tcode,
+         role_name     TYPE agr_define-agr_name,
+         description   TYPE tstct-ttext,
+         auth_object   TYPE agr_1251-object,
+         auth_field    TYPE agr_1251-field,
+         auth_value    TYPE agr_1251-low,
+       END OF ty_transaction_auth.
+
+* Structure for summary information
+TYPES: BEGIN OF ty_summary,
+         description TYPE string,
+         value       TYPE string,
+       END OF ty_summary.
+
+* Data declarations
+DATA: gt_user_role       TYPE TABLE OF ty_user_role,
+      gt_role_transaction TYPE TABLE OF ty_role_transaction,
+      gt_transaction_auth TYPE TABLE OF ty_transaction_auth,
+      gt_summary          TYPE TABLE OF ty_summary,
+      lo_alv              TYPE REF TO cl_salv_table.
+
+* Selection Screen
+SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) TEXT-r01 FOR FIELD rb_user.
+    PARAMETERS: rb_user RADIOBUTTON GROUP rb1 DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) TEXT-r02 FOR FIELD rb_role.
+    PARAMETERS: rb_role RADIOBUTTON GROUP rb1.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) TEXT-r03 FOR FIELD rb_trans.
+    PARAMETERS: rb_trans RADIOBUTTON GROUP rb1.
+  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN END OF BLOCK blk1.
+
+SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02.
+  SELECT-OPTIONS:
+    s_role   FOR agr_define-agr_name,    " Role selection
+    s_user   FOR usr02-bname,            " User selection
+    s_group  FOR usr02-class,            " User group selection
+    s_tcode  FOR agr_tcodes-tcode,       " Transaction code selection
+    s_object FOR agr_1251-object,        " Authorization object selection
+    s_fdate  FOR agr_users-from_dat,     " From date selection
+    s_tdate  FOR agr_users-to_dat.       " To date selection
+SELECTION-SCREEN END OF BLOCK blk2.
+
+SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE TEXT-b03.
+  PARAMETERS:
+    p_inact  AS CHECKBOX DEFAULT ' ',    " Include inactive users
+    p_urole  AS CHECKBOX DEFAULT 'X',    " Only users with roles
+    p_ruser  AS CHECKBOX DEFAULT 'X',    " Only roles with users
+    p_rnousr AS CHECKBOX DEFAULT ' ',    " Include roles without users
+    p_unorol AS CHECKBOX DEFAULT ' '.    " Include users without roles
+SELECTION-SCREEN END OF BLOCK blk3.
+
+* Text Elements
+SELECTION-SCREEN:
+  BEGIN OF BLOCK blk4 WITH FRAME TITLE TEXT-b04,
+    COMMENT /1(78) TEXT-c01,
+    COMMENT /1(78) TEXT-c02,
+    COMMENT /1(78) TEXT-c03,
+  END OF BLOCK blk4.
+
+* Main Processing
+START-OF-SELECTION.
+  CASE 'X'.
+    WHEN rb_user.
+      PERFORM process_user_role_view.
+    WHEN rb_role.
+      PERFORM process_role_transaction_view.
+    WHEN rb_trans.
+      PERFORM process_transaction_auth_view.
+  ENDCASE.
+
+*&---------------------------------------------------------------------*
+*&      Form  PROCESS_USER_ROLE_VIEW
+*&---------------------------------------------------------------------*
+FORM process_user_role_view.
+  PERFORM get_user_role_data.
+  PERFORM add_roles_without_users.
+  PERFORM add_users_without_roles.
+  PERFORM calculate_counts.
+  PERFORM apply_user_role_filters.
+  PERFORM build_user_role_summary.
+  PERFORM display_user_role_alv.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  PROCESS_ROLE_TRANSACTION_VIEW
+*&---------------------------------------------------------------------*
+FORM process_role_transaction_view.
+  PERFORM get_role_transaction_data.
+  PERFORM display_role_trans_alv.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  PROCESS_TRANSACTION_AUTH_VIEW
+*&---------------------------------------------------------------------*
+FORM process_transaction_auth_view.
+  PERFORM get_transaction_auth_data.
+  PERFORM display_trans_auth_alv.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_USER_ROLE_DATA
+*&---------------------------------------------------------------------*
+FORM get_user_role_data.
+  DATA: lt_temp LIKE gt_user_role,
+        lv_current_date TYPE datum,
+        lv_fdate_exists TYPE abap_bool,
+        lv_tdate_exists TYPE abap_bool.
+
+  lv_current_date = sy-datum.
+  lv_fdate_exists = xsdbool( s_fdate[] IS NOT INITIAL ).
+  lv_tdate_exists = xsdbool( s_tdate[] IS NOT INITIAL ).
+
+  SELECT a~agr_name  AS role_name,
+         r~uname     AS user_id,
+         u~class     AS user_group,
+         r~from_dat  AS from_date,
+         r~to_dat    AS to_date,
+         CASE WHEN r~from_dat > @lv_current_date OR r~to_dat < @lv_current_date
+              THEN 'X' ELSE ' ' END AS role_inactive,
+         CASE WHEN u~gltgv <> '00000000' AND u~gltgv < @lv_current_date
+              THEN 'X' ELSE ' ' END AS user_inactive
+    FROM agr_define AS a
+    INNER JOIN agr_users AS r
+      ON a~agr_name = r~agr_name
+    LEFT JOIN usr02 AS u
+      ON r~uname = u~bname
+    WHERE a~agr_name IN @s_role
+      AND r~uname    IN @s_user
+      AND u~class    IN @s_group
+      AND ( @lv_fdate_exists = @abap_false OR r~from_dat IN @s_fdate )
+      AND ( @lv_tdate_exists = @abap_false OR r~to_dat   IN @s_tdate )
+      AND ( @p_inact = 'X' OR
+            u~gltgv >= @lv_current_date OR
+            u~gltgv = '00000000' )
+    INTO CORRESPONDING FIELDS OF TABLE @lt_temp.
+
+  " Initialize calculated fields
+  LOOP AT lt_temp ASSIGNING FIELD-SYMBOL(<fs_temp>).
+    <fs_temp>-roles_per_user = 0.
+    <fs_temp>-users_per_role = 0.
+  ENDLOOP.
+
+  gt_user_role = lt_temp.
+  IF sy-subrc <> 0 AND p_rnousr = ' ' AND p_unorol = ' '.
+    MESSAGE 'No users found for the selected criteria' TYPE 'I' DISPLAY LIKE 'E'.
+    LEAVE LIST-PROCESSING.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  ADD_ROLES_WITHOUT_USERS
+*&---------------------------------------------------------------------*
+FORM add_roles_without_users.
+  IF p_rnousr = 'X'.
+    SELECT a~agr_name
+      FROM agr_define AS a
+      LEFT JOIN agr_users AS r ON a~agr_name = r~agr_name
+      WHERE a~agr_name IN @s_role
+        AND r~uname IS NULL
+      INTO TABLE @DATA(lt_roles_no_user).
+
+    LOOP AT lt_roles_no_user ASSIGNING FIELD-SYMBOL(<ls_role>).
+      APPEND VALUE #(
+        role_name      = <ls_role>-agr_name
+        role_inactive  = ' '
+        users_per_role = 0
+      ) TO gt_user_role.
+    ENDLOOP.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  ADD_USERS_WITHOUT_ROLES
+*&---------------------------------------------------------------------*
+FORM add_users_without_roles.
+  DATA: lv_current_date TYPE datum.
+  lv_current_date = sy-datum.
+
+  IF p_unorol = 'X'.
+    SELECT u~bname, u~class, u~gltgv
+      FROM usr02 AS u
+      LEFT JOIN agr_users AS r ON u~bname = r~uname
+      WHERE u~bname IN @s_user
+        AND u~class IN @s_group
+        AND r~uname IS NULL
+      INTO TABLE @DATA(lt_users_no_role).
+
+    LOOP AT lt_users_no_role ASSIGNING FIELD-SYMBOL(<ls_user>).
+      DATA(lv_user_inactive) = COND #(
+        WHEN <ls_user>-gltgv <> '00000000' AND <ls_user>-gltgv < lv_current_date
+        THEN 'X' ELSE ' '
+      ).
+      APPEND VALUE #(
+        user_id        = <ls_user>-bname
+        user_group     = <ls_user>-class
+        user_inactive  = lv_user_inactive
+        roles_per_user = 0
+      ) TO gt_user_role.
+    ENDLOOP.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  CALCULATE_COUNTS
+*&---------------------------------------------------------------------*
+FORM calculate_counts.
+  DATA:
+    lt_user_role_pairs TYPE TABLE OF ty_user_role,
+    lt_role_user_pairs TYPE TABLE OF ty_user_role.
+
+  " Create unique user-role pairs
+  lt_user_role_pairs = gt_user_role.
+  SORT lt_user_role_pairs BY user_id role_name.
+  DELETE ADJACENT DUPLICATES FROM lt_user_role_pairs COMPARING user_id role_name.
+
+  " Create unique role-user pairs
+  lt_role_user_pairs = gt_user_role.
+  SORT lt_role_user_pairs BY role_name user_id.
+  DELETE ADJACENT DUPLICATES FROM lt_role_user_pairs COMPARING role_name user_id.
+
+  " Calculate counts
+  LOOP AT gt_user_role ASSIGNING FIELD-SYMBOL(<fs_output>).
+    " Count roles per user
+    IF <fs_output>-user_id IS NOT INITIAL.
+      <fs_output>-roles_per_user = REDUCE i(
+        INIT cnt = 0
+        FOR <pair> IN lt_user_role_pairs
+        WHERE ( user_id = <fs_output>-user_id AND role_name IS NOT INITIAL )
+        NEXT cnt = cnt + 1
+      ).
+    ENDIF.
+
+    " Count users per role
+    IF <fs_output>-role_name IS NOT INITIAL.
+      <fs_output>-users_per_role = REDUCE i(
+        INIT cnt = 0
+        FOR <pair> IN lt_role_user_pairs
+        WHERE ( role_name = <fs_output>-role_name AND user_id IS NOT INITIAL )
+        NEXT cnt = cnt + 1
+      ).
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  APPLY_USER_ROLE_FILTERS
+*&---------------------------------------------------------------------*
+FORM apply_user_role_filters.
+  IF p_urole = 'X'.
+    DELETE gt_user_role WHERE user_id IS INITIAL OR roles_per_user = 0.
+  ENDIF.
+  IF p_ruser = 'X'.
+    DELETE gt_user_role WHERE role_name IS INITIAL OR users_per_role = 0.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  BUILD_USER_ROLE_SUMMARY
+*&---------------------------------------------------------------------*
+FORM build_user_role_summary.
+  DATA:
+    lv_users          TYPE i,
+    lv_roles          TYPE i,
+    lv_inactive_users TYPE i,
+    lv_inactive_roles TYPE i,
+    lv_users_no_role  TYPE i,
+    lv_roles_no_user  TYPE i,
+    lt_users          TYPE TABLE OF xubname,
+    lt_roles          TYPE TABLE OF agr_name.
+
+  " Get unique users
+  LOOP AT gt_user_role INTO DATA(ls_output) WHERE user_id IS NOT INITIAL.
+    APPEND ls_output-user_id TO lt_users.
+  ENDLOOP.
+  SORT lt_users.
+  DELETE ADJACENT DUPLICATES FROM lt_users.
+  lv_users = lines( lt_users ).
+
+  " Get unique roles
+  LOOP AT gt_user_role INTO ls_output WHERE role_name IS NOT INITIAL.
+    APPEND ls_output-role_name TO lt_roles.
+  ENDLOOP.
+  SORT lt_roles.
+  DELETE ADJACENT DUPLICATES FROM lt_roles.
+  lv_roles = lines( lt_roles ).
+
+  " Count inactive users
+  DATA: lt_inactive_users TYPE TABLE OF xubname.
+  LOOP AT gt_user_role INTO ls_output WHERE user_inactive = 'X' AND user_id IS NOT INITIAL.
+    APPEND ls_output-user_id TO lt_inactive_users.
+  ENDLOOP.
+  SORT lt_inactive_users.
+  DELETE ADJACENT DUPLICATES FROM lt_inactive_users.
+  lv_inactive_users = lines( lt_inactive_users ).
+
+  " Count inactive roles
+  DATA: lt_inactive_roles TYPE TABLE OF agr_name.
+  LOOP AT gt_user_role INTO ls_output WHERE role_inactive = 'X' AND role_name IS NOT INITIAL.
+    APPEND ls_output-role_name TO lt_inactive_roles.
+  ENDLOOP.
+  SORT lt_inactive_roles.
+  DELETE ADJACENT DUPLICATES FROM lt_inactive_roles.
+  lv_inactive_roles = lines( lt_inactive_roles ).
+
+  " Count users without roles
+  lv_users_no_role = REDUCE i(
+    INIT cnt = 0
+    FOR ls_row IN gt_user_role
+    WHERE ( role_name IS INITIAL AND user_id IS NOT INITIAL )
+    NEXT cnt = cnt + 1
+  ).
+
+  " Count roles without users
+  lv_roles_no_user = REDUCE i(
+    INIT cnt = 0
+    FOR ls_row IN gt_user_role
+    WHERE ( user_id IS INITIAL AND role_name IS NOT INITIAL )
+    NEXT cnt = cnt + 1
+  ).
+
+  " Build summary
+  CLEAR gt_summary.
+  APPEND VALUE #( description = 'Total Users'       value = |{ lv_users }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Total Roles'       value = |{ lv_roles }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Inactive Users'    value = |{ lv_inactive_users }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Inactive Roles'    value = |{ lv_inactive_roles }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Users Without Roles' value = |{ lv_users_no_role }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Roles Without Users' value = |{ lv_roles_no_user }| ) TO gt_summary.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_ROLE_TRANSACTION_DATA
+*&---------------------------------------------------------------------*
+FORM get_role_transaction_data.
+  SELECT a~agr_name    AS role_name,
+         t~tcode       AS transaction,
+         s~ttext       AS description
+    FROM agr_define AS a
+    INNER JOIN agr_tcodes AS t
+      ON a~agr_name = t~agr_name
+    LEFT JOIN tstct AS s
+      ON t~tcode = s~tcode AND s~sprsl = @sy-langu
+    WHERE a~agr_name IN @s_role
+      AND t~tcode    IN @s_tcode
+    INTO TABLE @gt_role_transaction.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'No transactions found for the selected roles' TYPE 'I' DISPLAY LIKE 'E'.
+    LEAVE LIST-PROCESSING.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_TRANSACTION_AUTH_DATA
+*&---------------------------------------------------------------------*
+FORM get_transaction_auth_data.
+  SELECT t~tcode       AS transaction,
+         a~agr_name    AS role_name,
+         s~ttext       AS description,
+         au~object     AS auth_object,
+         au~field      AS auth_field,
+         au~low        AS auth_value
+    FROM agr_tcodes AS t
+    INNER JOIN agr_define AS a
+      ON t~agr_name = a~agr_name
+    LEFT JOIN tstct AS s
+      ON t~tcode = s~tcode AND s~sprsl = @sy-langu
+    LEFT JOIN agr_1251 AS au
+      ON a~agr_name = au~agr_name
+    WHERE t~tcode    IN @s_tcode
+      AND a~agr_name IN @s_role
+      AND au~object  IN @s_object
+    INTO TABLE @gt_transaction_auth.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'No authorizations found for the selected transactions' TYPE 'I' DISPLAY LIKE 'E'.
+    LEAVE LIST-PROCESSING.
+  ENDIF.
+
+  SORT gt_transaction_auth BY transaction role_name auth_object auth_field.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_USER_ROLE_ALV
+*&---------------------------------------------------------------------*
+FORM display_user_role_alv.
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = lo_alv
+        CHANGING
+          t_table      = gt_user_role ).
+
+      " Header setup
+      DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
+      lo_grid->create_header_information(
+        row    = 1
+        column = 1
+        text   = 'USER-ROLE RELATIONSHIP REPORT' ).
+
+      " Add summary
+      DATA: lv_row TYPE i VALUE 2.
+      LOOP AT gt_summary INTO DATA(ls_summary).
+        lo_grid->create_label( row = lv_row column = 1 text = ls_summary-description ).
+        lo_grid->create_text( row = lv_row column = 2 text = ls_summary-value ).
+        lv_row = lv_row + 1.
+      ENDLOOP.
+      lo_alv->set_top_of_list( lo_grid ).
+
+      " Configure columns
+      DATA(lo_columns) = lo_alv->get_columns( ).
+      DATA(lo_functions) = lo_alv->get_functions( ).
+      lo_functions->set_all( abap_true ).
+
+      " Set column headers
+      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Role' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USER_ID' )->set_medium_text( 'User' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USER_GROUP' )->set_medium_text( 'Group' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'FROM_DATE' )->set_medium_text( 'From Date' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'TO_DATE' )->set_medium_text( 'To Date' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_INACTIVE' )->set_medium_text( 'Role Inactive' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLES_PER_USER' )->set_medium_text( 'Roles per User' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USERS_PER_ROLE' )->set_medium_text( 'Users per Role' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'USER_INACTIVE' )->set_medium_text( 'User Inactive' ). CATCH cx_salv_not_found. ENDTRY.
+
+      lo_columns->set_optimize( abap_true ).
+      lo_alv->display( ).
+
+    CATCH cx_salv_msg INTO DATA(lx_msg).
+      MESSAGE lx_msg->get_text( ) TYPE 'E'.
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_ROLE_TRANS_ALV
+*&---------------------------------------------------------------------*
+FORM display_role_trans_alv.
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = lo_alv
+        CHANGING
+          t_table      = gt_role_transaction ).
+
+      " Header setup
+      DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
+      lo_grid->create_header_information(
+        row    = 1
+        column = 1
+        text   = 'ROLE-TRANSACTION RELATIONSHIP REPORT' ).
+      lo_alv->set_top_of_list( lo_grid ).
+
+      " Configure columns
+      DATA(lo_columns) = lo_alv->get_columns( ).
+      DATA(lo_functions) = lo_alv->get_functions( ).
+      lo_functions->set_all( abap_true ).
+
+      " Set column headers
+      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Role Name' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transaction' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Description' ). CATCH cx_salv_not_found. ENDTRY.
+
+      lo_columns->set_optimize( abap_true ).
+      lo_alv->display( ).
+
+    CATCH cx_salv_msg INTO DATA(lx_msg).
+      MESSAGE lx_msg->get_text( ) TYPE 'E'.
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_TRANS_AUTH_ALV
+*&---------------------------------------------------------------------*
+FORM display_trans_auth_alv.
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = lo_alv
+        CHANGING
+          t_table      = gt_transaction_auth ).
+
+      " Header setup
+      DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
+      lo_grid->create_header_information(
+        row    = 1
+        column = 1
+        text   = 'TRANSACTION-AUTHORIZATION RELATIONSHIP REPORT' ).
+      lo_alv->set_top_of_list( lo_grid ).
+
+      " Configure columns
+      DATA(lo_columns) = lo_alv->get_columns( ).
+      DATA(lo_functions) = lo_alv->get_functions( ).
+      lo_functions->set_all( abap_true ).
+
+      " Set column headers
+      TRY. lo_columns->get_column( 'TRANSACTION' )->set_medium_text( 'Transaction' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'ROLE_NAME' )->set_medium_text( 'Role/Auth' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'DESCRIPTION' )->set_medium_text( 'Description' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_OBJECT' )->set_medium_text( 'Auth Object' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_FIELD' )->set_medium_text( 'Auth Field' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_columns->get_column( 'AUTH_VALUE' )->set_medium_text( 'Auth Value' ). CATCH cx_salv_not_found. ENDTRY.
+
+      lo_columns->set_optimize( abap_true ).
+      lo_alv->display( ).
+
+    CATCH cx_salv_msg INTO DATA(lx_msg).
+      MESSAGE lx_msg->get_text( ) TYPE 'E'.
+  ENDTRY.
+ENDFORM.

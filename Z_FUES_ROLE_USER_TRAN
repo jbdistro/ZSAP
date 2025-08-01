@@ -277,7 +277,7 @@ FORM load_fues_mapping.
   lo_excel = NEW cl_fdt_xl_spreadsheet( ).
   lo_excel->if_fdt_doc_spreadsheet~load_document(
       i_document_name = p_xfile
-      i_document      = lv_xstr ).
+      i_xdocument     = lv_xstr ).
 
   CLEAR lt_names.
   lo_excel->if_fdt_doc_spreadsheet~get_worksheet_names(
@@ -288,7 +288,7 @@ FORM load_fues_mapping.
     RETURN.
   ENDIF.
   lt_table = lo_excel->if_fdt_doc_spreadsheet~get_itab_from_worksheet(
-                worksheet_name = lv_sheet ).
+                iv_worksheet_name = lv_sheet ).
 
   READ TABLE lt_table INDEX 1 INTO lt_head.
   LOOP AT lt_head INTO lv_cell.

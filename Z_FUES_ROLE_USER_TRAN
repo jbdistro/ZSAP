@@ -152,7 +152,7 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       gt_role_fues        TYPE STANDARD TABLE OF ty_role_fues,
       gt_user_fues        TYPE STANDARD TABLE OF ty_user_fues,
       lo_alv               TYPE REF TO cl_salv_table.
-
+      gv_xfile            TYPE rlgrap-filename.
 
 *========================================================================*
 * Pantalla de selección: vistas, filtros, flags(2) *
@@ -232,14 +232,12 @@ ENDFORM.
 * Cargar archivo Excel con clasificación FUES                         *
 *=====================================================================*
 FORM load_fues_mapping.
-  DATA: lt_file     TYPE filetable,
-        lv_rc       TYPE i,
-        lt_bin      TYPE STANDARD TABLE OF x255,
-        lv_bin_size TYPE i,
-        lv_xstr     TYPE xstring,
-        lo_excel    TYPE REF TO cl_fdt_xl_spreadsheet,
-        lt_table    TYPE STANDARD TABLE OF string_table,
-        lv_col_tc   TYPE i,
+  DATA: lt_file    TYPE filetable,
+        lv_rc      TYPE i,
+        lt_bin     TYPE STANDARD TABLE OF x255,
+        lo_excel   TYPE REF TO cl_fdt_xl_spreadsheet,
+        lt_table   TYPE STANDARD TABLE OF string,
+        lv_col_tc  TYPE i,
         lv_col_fues TYPE i.
 
   IF p_xfile IS INITIAL.
@@ -253,7 +251,7 @@ FORM load_fues_mapping.
     ENDIF.
   ENDIF.
 
-  cl_gui_frontend_services=>gui_upload(
+  cl_gui_fronten
     EXPORTING filename   = CONV string( p_xfile )
               filetype   = 'BIN'
     IMPORTING filelength = lv_bin_size

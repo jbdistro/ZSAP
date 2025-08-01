@@ -725,19 +725,16 @@ FORM display_user_role_alv.
       " Crear tabla ALV a partir de gt_user_role
       cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_user_role ).
 
-      " Encabezado con resumen
+      " Resumen en pie de lista sin encabezado destacado
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
-      lo_grid->create_header_information(
-        row = 1 column = 1
-        text = |Usuario-Rol (Fecha: { sy-datum DATE = ENVIRONMENT })| ).
 
-      DATA(lv_row) = 2.
+      DATA(lv_row) = 1.
       LOOP AT gt_summary INTO DATA(ls_s1).
         lo_grid->create_label( row = lv_row column = 1 text = ls_s1-description ).
         lo_grid->create_text(  row = lv_row column = 2 text = ls_s1-value ).
         lv_row = lv_row + 1.
       ENDLOOP.
-      lo_alv->set_top_of_list( lo_grid ).
+      lo_alv->set_end_of_list( lo_grid ).
 
       " Configuraciones visuales y funciones
       lo_alv->get_functions( )->set_all( abap_true ).
@@ -771,17 +768,14 @@ FORM display_role_trans_alv.
   TRY.
       cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_role_transaction ).
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
-      lo_grid->create_header_information(
-        row = 1 column = 1
-        text = |Rol-Transacción (Fecha: { sy-datum DATE = ENVIRONMENT })| ).
 
-      DATA(lv_row) = 2.
+      DATA(lv_row) = 1.
       LOOP AT gt_summary INTO DATA(ls_rt_s).
         lo_grid->create_label( row = lv_row column = 1 text = ls_rt_s-description ).
         lo_grid->create_text(  row = lv_row column = 2 text = ls_rt_s-value ).
         lv_row = lv_row + 1.
       ENDLOOP.
-      lo_alv->set_top_of_list( lo_grid ).
+      lo_alv->set_end_of_list( lo_grid ).
 
       lo_alv->get_functions( )->set_all( abap_true ).
       lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).
@@ -807,17 +801,14 @@ FORM display_user_tcode_alv.
   TRY.
       cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_user_tcode ).
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
-      lo_grid->create_header_information(
-        row = 1 column = 1
-        text = |Usuario-Transacción (Fecha: { sy-datum DATE = ENVIRONMENT })| ).
 
-      DATA lv_row TYPE i VALUE 2.
+      DATA lv_row TYPE i VALUE 1.
       LOOP AT gt_summary INTO DATA(ls_a).
         lo_grid->create_label( row = lv_row column = 1 text = ls_a-description ).
         lo_grid->create_text(  row = lv_row column = 2 text = ls_a-value ).
         lv_row = lv_row + 1.
       ENDLOOP.
-      lo_alv->set_top_of_list( lo_grid ).
+      lo_alv->set_end_of_list( lo_grid ).
 
       lo_alv->get_functions( )->set_all( abap_true ).
       lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).
@@ -845,17 +836,14 @@ FORM display_user_object_alv.
   TRY.
       cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_user_object ).
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
-      lo_grid->create_header_information(
-        row = 1 column = 1
-        text = |Usuario-Objeto (Fecha: { sy-datum DATE = ENVIRONMENT })| ).
 
-      DATA lv_row TYPE i VALUE 2.
+      DATA lv_row TYPE i VALUE 1.
       LOOP AT gt_summary INTO DATA(ls_b).
         lo_grid->create_label( row = lv_row column = 1 text = ls_b-description ).
         lo_grid->create_text(  row = lv_row column = 2 text = ls_b-value ).
         lv_row = lv_row + 1.
       ENDLOOP.
-      lo_alv->set_top_of_list( lo_grid ).
+      lo_alv->set_end_of_list( lo_grid ).
 
       lo_alv->get_functions( )->set_all( abap_true ).
       lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).
@@ -886,19 +874,16 @@ FORM display_user_profile_alv.
         IMPORTING r_salv_table = lo_alv
         CHANGING  t_table      = gt_user_profile ).
 
-      " Header con resumen
+      " Resumen en pie de lista
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
-      lo_grid->create_header_information(
-        row = 1 column = 1
-        text = |Usuario-Perfil (Fecha: { sy-datum DATE = ENVIRONMENT })| ).
 
-      DATA(lv_row) = 2.
+      DATA(lv_row) = 1.
       LOOP AT gt_summary INTO DATA(ls_up_s).
         lo_grid->create_label( row = lv_row column = 1 text = ls_up_s-description ).
         lo_grid->create_text(  row = lv_row column = 2 text = ls_up_s-value ).
         lv_row = lv_row + 1.
       ENDLOOP.
-      lo_alv->set_top_of_list( lo_grid ).
+      lo_alv->set_end_of_list( lo_grid ).
 
       lo_alv->get_functions( )->set_all( abap_true ).
       lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).
@@ -925,17 +910,14 @@ FORM display_trans_auth_alv.
   TRY.
       cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_transaction_auth ).
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
-      lo_grid->create_header_information(
-        row = 1 column = 1
-        text = |Transacción-Autorización (Fecha: { sy-datum DATE = ENVIRONMENT })| ).
 
-      DATA(lv_row) = 2.
+      DATA(lv_row) = 1.
       LOOP AT gt_summary INTO DATA(ls_ta_s).
         lo_grid->create_label( row = lv_row column = 1 text = ls_ta_s-description ).
         lo_grid->create_text(  row = lv_row column = 2 text = ls_ta_s-value ).
         lv_row = lv_row + 1.
       ENDLOOP.
-      lo_alv->set_top_of_list( lo_grid ).
+      lo_alv->set_end_of_list( lo_grid ).
 
       lo_alv->get_functions( )->set_all( abap_true ).
       lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).

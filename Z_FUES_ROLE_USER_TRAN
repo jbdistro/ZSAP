@@ -151,9 +151,8 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       gt_fues_map         TYPE STANDARD TABLE OF ty_fues_map,
       gt_role_fues        TYPE STANDARD TABLE OF ty_role_fues,
       gt_user_fues        TYPE STANDARD TABLE OF ty_user_fues,
-      lo_alv               TYPE REF TO cl_salv_table,
+      lo_alv               TYPE REF TO cl_salv_table.
       gv_xfile            TYPE rlgrap-filename.
-
 
 *========================================================================*
 * Pantalla de selección: vistas, filtros, flags(2) *
@@ -252,26 +251,47 @@ FORM load_fues_mapping.
     ENDIF.
   ENDIF.
 
-  cl_gui_frontend_services=>gui_upload(
-    EXPORTING filename = p_xfile filetype = 'BIN'
-    IMPORTING data_tab = lt_bin ).
+  cl_gui_fronten
+    EXPORTING filename   = CONV string( p_xfile )
+              filetype   = 'BIN'
+    IMPORTING filelength = lv_bin_size
+    CHANGING  data_tab   = lt_bin ).
 
-  lo_excel = NEW cl_fdt_xl_spreadsheet( document = lt_bin ).
+  CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
+    EXPORTING
+      input_length = lv_bin_size
+    IMPORTING
+      buffer       = lv_xstr
+    TABLES
+      binary_tab   = lt_bin.
+
+  lo_excel = NEW cl_fdt_xl_spreadsheet( ).
+  lo_excel->if_fdt_doc_spreadsheet~load_document( i_document = lv_xstr ).
+
+  DATA lt_names TYPE string_table.
+  lt_names = lo_excel->if_fdt_doc_spreadsheet~get_worksheet_names( ).
+  READ TABLE lt_names INDEX 1 INTO DATA(lv_sheet).
+  IF sy-subrc <> 0.
+    MESSAGE 'El archivo de FUES no tiene hojas' TYPE 'E'.
+    RETURN.
+  ENDIF.
   lt_table = lo_excel->if_fdt_doc_spreadsheet~get_itab_from_worksheet(
-                iv_worksheet_name = lo_excel->if_fdt_doc_spreadsheet~get_first_worksheet_name( ) ).
+                iv_worksheet_name = lv_sheet ).
 
-  READ TABLE lt_table INDEX 1 INTO DATA(ls_head).
-  LOOP AT ls_head INTO DATA(lv_cell) FROM 1.
+  READ TABLE lt_table INDEX 1 INTO DATA(lt_head).
+  LOOP AT lt_head INTO DATA(lv_cell).
     PERFORM normalize_head USING lv_cell CHANGING lv_cell.
     CASE lv_cell.
-      WHEN 'TRANSACTION_CODE' OR 'TCODE' OR 'TRANSACCION'. lv_col_tc = sy-tabix.
-      WHEN 'FINAL' OR 'FUES' OR 'NIVEL'. lv_col_fues = sy-tabix.
+      WHEN 'TRANSACTION_CODE' OR 'TCODE' OR 'TRANSACCION'.
+        lv_col_tc = sy-tabix.
+      WHEN 'FINAL' OR 'FUES' OR 'NIVEL'.
+        lv_col_fues = sy-tabix.
     ENDCASE.
   ENDLOOP.
 
-  LOOP AT lt_table ASSIGNING FIELD-SYMBOL(<row>) FROM 2.
-    DATA(lv_tc) = <row>[ lv_col_tc ].
-    DATA(lv_lv) = <row>[ lv_col_fues ].
+  LOOP AT lt_table INTO DATA(lt_row) FROM 2.
+    READ TABLE lt_row INDEX lv_col_tc INTO DATA(lv_tc).
+    READ TABLE lt_row INDEX lv_col_fues INTO DATA(lv_lv).
     APPEND VALUE ty_fues_map( tcode = lv_tc fues_level = lv_lv ) TO gt_fues_map.
   ENDLOOP.
 ENDFORM.

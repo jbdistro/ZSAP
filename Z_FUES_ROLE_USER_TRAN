@@ -238,7 +238,7 @@ FORM load_fues_mapping.
         lv_bin_size TYPE i,
         lv_xstr     TYPE xstring,
         lo_excel    TYPE REF TO cl_fdt_xl_spreadsheet,
-        lt_table    TYPE STANDARD TABLE OF string_table,
+        lt_table    TYPE TABLE OF string_table,
         lt_head     TYPE string_table,
         lt_row      TYPE string_table,
         lt_names    TYPE string_table,
@@ -342,8 +342,8 @@ FORM classify_roles_fues.
     ENDLOOP.
 
     IF lv_total > 0.
-      lv_pct_core = ( lv_core + lv_adv ) * 100 / lv_total.
-      lv_pct_adv  = lv_adv * 100 / lv_total.
+      lv_pct_core = ( lv_core + lv_adv ) * 100.0 / lv_total.
+      lv_pct_adv  = lv_adv * 100.0 / lv_total.
     ELSE.
       lv_pct_core = 0.
       lv_pct_adv  = 0.
@@ -397,8 +397,8 @@ FORM classify_users_fues.
     ENDLOOP.
 
     IF lv_total > 0.
-      lv_pct_core = ( lv_core + lv_adv ) * 100 / lv_total.
-      lv_pct_adv  = lv_adv * 100 / lv_total.
+      lv_pct_core = ( lv_core + lv_adv ) * 100.0 / lv_total.
+      lv_pct_adv  = lv_adv * 100.0 / lv_total.
     ELSE.
       lv_pct_core = 0.
       lv_pct_adv  = 0.

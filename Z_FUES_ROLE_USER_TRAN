@@ -115,6 +115,34 @@ TYPES: BEGIN OF ty_summary,
          value       TYPE string,
        END OF ty_summary.
 
+*--- Estructura: Mapeo Transacción ↔ Nivel FUES
+TYPES: BEGIN OF ty_fues_map,
+         transaction TYPE tcode,
+         nivel       TYPE string,
+       END OF ty_fues_map.
+
+*--- Estructura: Nivel FUES por rol
+TYPES: BEGIN OF ty_role_fues,
+         role_name        TYPE agr_define-agr_name,
+         nivel            TYPE string,
+         trans_total      TYPE i,
+         trans_avanzadas  TYPE i,
+         trans_core_o_mas TYPE i,
+         porc_avanzadas   TYPE p DECIMALS 2,
+         porc_core_o_mas  TYPE p DECIMALS 2,
+       END OF ty_role_fues.
+
+*--- Estructura: Nivel FUES por usuario
+TYPES: BEGIN OF ty_user_fues,
+         user_id          TYPE xubname,
+         nivel            TYPE string,
+         roles_total      TYPE i,
+         roles_avanzados  TYPE i,
+         roles_core_o_mas TYPE i,
+         porc_avanzados   TYPE p DECIMALS 2,
+         porc_core_o_mas  TYPE p DECIMALS 2,
+       END OF ty_user_fues.
+
 *--- Declaración de tablas internas y objeto ALV
 DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       gt_role_transaction  TYPE STANDARD TABLE OF ty_role_transaction,
@@ -123,6 +151,9 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       gt_user_object       TYPE STANDARD TABLE OF ty_user_object,
       gt_user_profile      TYPE STANDARD TABLE OF ty_user_profile,
       gt_summary           TYPE STANDARD TABLE OF ty_summary,
+      gt_fues_map          TYPE STANDARD TABLE OF ty_fues_map,
+      gt_role_fues         TYPE STANDARD TABLE OF ty_role_fues,
+      gt_user_fues         TYPE STANDARD TABLE OF ty_user_fues,
       lo_alv               TYPE REF TO cl_salv_table.
 
 
@@ -168,10 +199,23 @@ SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE TEXT-b03. " Opciones
 
 SELECTION-SCREEN END OF BLOCK blk3.
 
+*--- Bloque 4: Opciones FUES
+SELECTION-SCREEN BEGIN OF BLOCK blkf WITH FRAME TITLE TEXT-bf1.
+  PARAMETERS p_runfues AS CHECKBOX DEFAULT ' '.
+  PARAMETERS p_fuesfile TYPE rlgrap-filename.
+SELECTION-SCREEN END OF BLOCK blkf.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_fuesfile.
+  PERFORM select_fues_file CHANGING p_fuesfile.
+
 *======================================================================*
 * Lógica principal: Dispatcher de vistas según opción seleccionada (3) *
 *======================================================================*
 START-OF-SELECTION.
+  IF p_runfues = 'X'.
+    PERFORM process_fues.
+    RETURN.
+  ENDIF.
   CASE 'X'.
     WHEN rb_user.   PERFORM process_user_role_view.          " Vista Rol-Usuario
     WHEN rb_role.   PERFORM process_role_transaction_view.   " Vista Rol-Transacción
@@ -192,6 +236,178 @@ FORM process_user_role_view.
   PERFORM apply_user_role_filters.   " Filtrar resultados según flags de exclusión
   PERFORM build_user_role_summary.   " Construir resumen cuantitativo de la vista
   PERFORM display_user_role_alv.     " Mostrar datos en tabla ALV SALV
+ENDFORM.
+
+*=====================================================================*
+* Seleccionar archivo de clasificación FUES                           *
+*=====================================================================*
+FORM select_fues_file CHANGING cv_file TYPE rlgrap-filename.
+  DATA: lt_file TYPE filetable,
+        lv_rc   TYPE i.
+  cl_gui_frontend_services=>file_open_dialog(
+    EXPORTING file_filter = 'Excel Files (*.xlsx)|*.xlsx|'
+    CHANGING  file_table  = lt_file
+              rc         = lv_rc ).
+  IF lv_rc > 0.
+    READ TABLE lt_file INDEX 1 INTO DATA(ls_file).
+    IF sy-subrc = 0.
+      cv_file = ls_file-filename.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+*=====================================================================*
+* Cargar datos de clasificación FUES desde Excel                       *
+*=====================================================================*
+FORM load_fues_data.
+  DATA: lv_xstr TYPE xstring,
+        lo_xl   TYPE REF TO cl_fdt_xl_spreadsheet,
+        lt_tab  TYPE TABLE OF string,
+        lv_col_tran TYPE i,
+        lv_col_lvl  TYPE i.
+
+  cl_gui_frontend_services=>gui_upload(
+    EXPORTING filename   = p_fuesfile
+              filetype   = 'BIN'
+    IMPORTING filelength = DATA(lv_len)
+    CHANGING  data_tab   = lv_xstr ).
+
+  lo_xl = NEW cl_fdt_xl_spreadsheet( ).
+  lo_xl->load_document_from_xstring( iv_xstring = lv_xstr ).
+  lt_tab = lo_xl->if_fdt_doc_spreadsheet~get_itab_from_worksheet( ip_worksheet = 'Sheet1' ).
+
+  READ TABLE lt_tab INDEX 1 INTO DATA(ls_head).
+  LOOP AT ls_head INTO DATA(lv_field).
+    PERFORM normalize_head USING lv_field CHANGING lv_field.
+    IF lv_field = 'TRANSACCION' OR lv_field = 'TRANSACTION_CODE'.
+      lv_col_tran = sy-tabix.
+    ELSEIF lv_field = 'NIVEL' OR lv_field = 'FINAL'.
+      lv_col_lvl = sy-tabix.
+    ENDIF.
+  ENDLOOP.
+
+  LOOP AT lt_tab INTO DATA(ls_row) FROM 2.
+    READ TABLE ls_row INDEX lv_col_tran INTO DATA(lv_tcode).
+    READ TABLE ls_row INDEX lv_col_lvl  INTO DATA(lv_level).
+    APPEND VALUE #( transaction = lv_tcode nivel = lv_level ) TO gt_fues_map.
+  ENDLOOP.
+ENDFORM.
+
+*=====================================================================*
+* Calcular nivel FUES por rol                                         *
+*=====================================================================*
+FORM calculate_role_fues.
+  CLEAR gt_role_fues.
+  LOOP AT gt_role_transaction INTO DATA(ls_rt) GROUP BY ls_rt-role_name.
+    DATA(total)      = 0.
+    DATA(adv)        = 0.
+    DATA(core_plus)  = 0.
+    DATA(priority)   = 0.
+    LOOP AT GROUP ls_rt INTO DATA(ls_tr).
+      total = total + 1.
+      READ TABLE gt_fues_map WITH KEY transaction = ls_tr-transaction INTO DATA(ls_m).
+      IF sy-subrc = 0.
+        CASE ls_m-nivel.
+          WHEN 'Avanzado'.
+            adv = adv + 1.
+            core_plus = core_plus + 1.
+            priority = 3.
+          WHEN 'Core'.
+            core_plus = core_plus + 1.
+            IF priority < 2.
+              priority = 2.
+            ENDIF.
+          WHEN OTHERS.
+            IF priority < 1.
+              priority = 1.
+            ENDIF.
+        ENDCASE.
+      ENDIF.
+    ENDLOOP.
+    DATA(lv_level) = SWITCH #( priority WHEN 3 THEN 'Avanzado' WHEN 2 THEN 'Core' ELSE 'Self Service' ).
+    APPEND VALUE ty_role_fues(
+      role_name        = ls_rt-role_name
+      nivel            = lv_level
+      trans_total      = total
+      trans_avanzadas  = adv
+      trans_core_o_mas = core_plus
+      porc_avanzadas   = CONV p( adv * 100 / total )
+      porc_core_o_mas  = CONV p( core_plus * 100 / total ) ) TO gt_role_fues.
+  ENDLOOP.
+ENDFORM.
+
+*=====================================================================*
+* Calcular nivel FUES por usuario                                     *
+*=====================================================================*
+FORM calculate_user_fues.
+  CLEAR gt_user_fues.
+  LOOP AT gt_user_role INTO DATA(ls_ur) GROUP BY ls_ur-user_id.
+    DATA(total_roles) = 0.
+    DATA(adv_roles)   = 0.
+    DATA(core_roles)  = 0.
+    DATA(priority)    = 0.
+    LOOP AT GROUP ls_ur INTO DATA(ls_u).
+      total_roles = total_roles + 1.
+      READ TABLE gt_role_fues WITH KEY role_name = ls_u-role_name INTO DATA(ls_rf).
+      IF sy-subrc = 0.
+        CASE ls_rf-nivel.
+          WHEN 'Avanzado'.
+            adv_roles = adv_roles + 1.
+            core_roles = core_roles + 1.
+            priority = 3.
+          WHEN 'Core'.
+            core_roles = core_roles + 1.
+            IF priority < 2.
+              priority = 2.
+            ENDIF.
+          WHEN OTHERS.
+            IF priority < 1.
+              priority = 1.
+            ENDIF.
+        ENDCASE.
+      ENDIF.
+    ENDLOOP.
+    DATA(lv_u_level) = SWITCH #( priority WHEN 3 THEN 'Avanzado' WHEN 2 THEN 'Core' ELSE 'Self Service' ).
+    APPEND VALUE ty_user_fues(
+      user_id          = ls_ur-user_id
+      nivel            = lv_u_level
+      roles_total      = total_roles
+      roles_avanzados  = adv_roles
+      roles_core_o_mas = core_roles
+      porc_avanzados   = CONV p( adv_roles * 100 / total_roles )
+      porc_core_o_mas  = CONV p( core_roles * 100 / total_roles ) ) TO gt_user_fues.
+  ENDLOOP.
+ENDFORM.
+
+*=====================================================================*
+* Exportar resultados FUES a archivos locales                          *
+*=====================================================================*
+FORM export_fues_results.
+  cl_gui_frontend_services=>gui_download(
+    EXPORTING filename = 'roles_con_nivel_fues.csv' filetype = 'ASC'
+    CHANGING  data_tab = gt_role_fues ).
+  cl_gui_frontend_services=>gui_download(
+    EXPORTING filename = 'usuarios_con_nivel_fues.csv' filetype = 'ASC'
+    CHANGING  data_tab = gt_user_fues ).
+  MESSAGE 'Procesamiento FUES completado' TYPE 'S'.
+ENDFORM.
+
+*=====================================================================*
+* Proceso completo de niveles FUES                                    *
+*=====================================================================*
+FORM process_fues.
+  PERFORM get_user_role_data.
+  PERFORM add_roles_without_users.
+  PERFORM add_users_without_roles.
+  PERFORM calculate_counts.
+  PERFORM get_role_transaction_data.
+  IF p_fuesfile IS INITIAL.
+    PERFORM select_fues_file CHANGING p_fuesfile.
+  ENDIF.
+  PERFORM load_fues_data.
+  PERFORM calculate_role_fues.
+  PERFORM calculate_user_fues.
+  PERFORM export_fues_results.
 ENDFORM.
 
 *=====================================================================*

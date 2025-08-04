@@ -33,7 +33,7 @@ FORM get_users_without_roles.
     INTO TABLE @gt_users.
 
   LOOP AT gt_users ASSIGNING FIELD-SYMBOL(<fs_user>).
-    <fs_user>-fues_level = 'No disponible'.
+    <fs_user>-fues_level = 'SELF SERV'.
   ENDLOOP.
 ENDFORM.
 

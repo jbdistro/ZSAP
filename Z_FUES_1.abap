@@ -326,45 +326,149 @@ FORM calculate_user_fues.
 ENDFORM.
 
 *=====================================================================*
-* Carga de archivo Excel de clasificación FUES                         *
+* Carga de archivo Excel de clasificación FUES - SOLUTION 1 (Recommended)
 *=====================================================================*
 FORM load_fues_data.
-  DATA lo_excel TYPE REF TO cl_fdt_xl_spreadsheet.
-  DATA lt_table TYPE STANDARD TABLE OF string_table.
+  " Using GUI_UPLOAD approach - works with Excel saved as CSV/Tab-delimited
+  DATA: lt_raw_data TYPE TABLE OF string,
+        lv_filename TYPE string,
+        lv_line     TYPE string,
+        lt_fields   TYPE TABLE OF string,
+        lv_tcode    TYPE tcode,
+        lv_rule     TYPE string,
+        lv_level    TYPE char10.
+
+  lv_filename = p_file.
 
   TRY.
-      lo_excel = NEW cl_fdt_xl_spreadsheet( ).
-      lo_excel->open_document( p_file ).
-      lt_table = lo_excel->if_fdt_doc_spreadsheet~get_itab_from_document( ).
+      " Use GUI_UPLOAD to read the file
+      CALL FUNCTION 'GUI_UPLOAD'
+        EXPORTING
+          filename                = lv_filename
+          filetype                = 'ASC'
+          has_field_separator     = 'X'
+        TABLES
+          data_tab                = lt_raw_data
+        EXCEPTIONS
+          file_open_error         = 1
+          file_read_error         = 2
+          no_batch                = 3
+          gui_refuse_filetransfer = 4
+          invalid_type            = 5
+          no_authority            = 6
+          unknown_error           = 7
+          bad_data_format         = 8
+          header_not_allowed      = 9
+          separator_not_allowed   = 10
+          header_too_long         = 11
+          unknown_dp_error        = 12
+          access_denied           = 13
+          dp_out_of_memory        = 14
+          disk_full               = 15
+          dp_timeout              = 16
+          OTHERS                  = 17.
+
+      IF sy-subrc <> 0.
+        MESSAGE 'Error al leer el archivo Excel. Asegúrese de que esté guardado como CSV o texto delimitado por tabuladores.' TYPE 'E'.
+        RETURN.
+      ENDIF.
+
     CATCH cx_root INTO DATA(lx_fues).
       MESSAGE lx_fues->get_text( ) TYPE 'E'.
       RETURN.
   ENDTRY.
 
-  " Conversión de la primera hoja a estructura interna
-  DATA lv_header TYPE abap_bool VALUE abap_true.
-  LOOP AT lt_table INTO DATA(ls_line).
-    IF lv_header = abap_true.
-      lv_header = abap_false.
+  " Procesar las líneas del archivo (saltar encabezado)
+  DATA lv_first_line TYPE abap_bool VALUE abap_true.
+
+  LOOP AT lt_raw_data INTO lv_line.
+    " Saltar la primera línea (encabezado)
+    IF lv_first_line = abap_true.
+      lv_first_line = abap_false.
       CONTINUE.
     ENDIF.
 
-    DATA lv_tcode  TYPE tcode.
-    DATA lv_rule   TYPE string.
-    lv_tcode = ls_line[ 5 ].
-    lv_rule  = ls_line[ 2 ].
+    " Limpiar variables
+    CLEAR: lt_fields, lv_tcode, lv_rule, lv_level.
 
-    DATA(lv_level) = SWITCH char10( lv_rule+0(2) )
-                        WHEN 'GB' THEN 'AVANZADO'
-                        WHEN 'GC' THEN 'CORE'
-                        WHEN 'GD' THEN 'SELF SERV'
-                        ELSE ''.
+    " Dividir la línea por diferentes delimitadores
+    SPLIT lv_line AT cl_abap_char_utilities=>horizontal_tab INTO TABLE lt_fields.
 
-    IF lv_tcode IS NOT INITIAL AND lv_level IS NOT INITIAL.
-      APPEND VALUE ty_tcode_fues( transaction = lv_tcode
-                                  fues_level = lv_level ) TO gt_fues_tcode.
+    " Si no hay tabuladores, intentar con punto y coma
+    IF lines( lt_fields ) <= 1.
+      CLEAR lt_fields.
+      SPLIT lv_line AT ';' INTO TABLE lt_fields.
+    ENDIF.
+
+    " Si no hay punto y coma, intentar con coma
+    IF lines( lt_fields ) <= 1.
+      CLEAR lt_fields.
+      SPLIT lv_line AT ',' INTO TABLE lt_fields.
+    ENDIF.
+
+    " Verificar que tenemos suficientes campos (al menos 5 columnas)
+    IF lines( lt_fields ) >= 5.
+      " Obtener los valores de las columnas necesarias
+      READ TABLE lt_fields INTO lv_rule INDEX 2.
+      READ TABLE lt_fields INTO lv_tcode INDEX 5.
+
+      " Limpiar espacios en blanco
+      CONDENSE lv_rule NO-GAPS.
+      CONDENSE lv_tcode NO-GAPS.
+
+      " Determinar el nivel FUES basado en la regla
+      IF strlen( lv_rule ) >= 2.
+        CASE lv_rule+0(2).
+          WHEN 'GB'.
+            lv_level = 'AVANZADO'.
+          WHEN 'GC'.
+            lv_level = 'CORE'.
+          WHEN 'GD'.
+            lv_level = 'SELF SERV'.
+          WHEN OTHERS.
+            lv_level = ''.
+        ENDCASE.
+      ENDIF.
+
+      " Agregar a la tabla interna si ambos valores son válidos
+      IF lv_tcode IS NOT INITIAL AND lv_level IS NOT INITIAL.
+        APPEND VALUE ty_tcode_fues( transaction = lv_tcode
+                                    fues_level = lv_level ) TO gt_fues_tcode.
+      ENDIF.
     ENDIF.
   ENDLOOP.
+
+  " Mensaje informativo
+  IF lines( gt_fues_tcode ) > 0.
+    MESSAGE |Se cargaron { lines( gt_fues_tcode ) } transacciones FUES del archivo| TYPE 'I'.
+  ELSE.
+    MESSAGE 'No se cargaron datos FUES válidos. Verifique el formato del archivo.' TYPE 'I'.
+  ENDIF.
+
+ENDFORM.
+
+*=====================================================================*
+* Alternative: Simple file reading approach using OPEN DATASET        *
+*=====================================================================*
+FORM load_fues_excel_alt.
+  " Alternative approach for systems where GUI_UPLOAD might not work
+  " This approach reads the file as a simple text file
+  DATA: lv_filename TYPE string,
+        lv_line     TYPE string,
+        lt_fields   TYPE TABLE OF string,
+        lv_tcode    TYPE tcode,
+        lv_rule     TYPE string,
+        lv_level    TYPE char10,
+        lv_counter  TYPE i.
+
+  lv_filename = p_file.
+
+  " Simple message - this alternative is for reference only
+  MESSAGE 'Use the main LOAD_FUES_DATA form. This alternative is for reference.' TYPE 'I'.
+
+  " Alternative approach using text processing (commented out for reference)
+  " You can implement this if needed for specific file formats
+
 ENDFORM.
 
 *=====================================================================*

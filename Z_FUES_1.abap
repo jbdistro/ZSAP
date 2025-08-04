@@ -157,7 +157,7 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
 * Pantalla de selección: vistas, filtros, flags(2) *
 *========================================================================*
 
-PARAMETERS p_file TYPE rlgrap-filename OBLIGATORY.
+PARAMETERS p_file TYPE rlgrap-filename.
 
 *--- Bloque 1: Selección de vista
 SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01. " Selección de vista
@@ -201,7 +201,9 @@ SELECTION-SCREEN END OF BLOCK blk3.
 * Lógica principal: Dispatcher de vistas según opción seleccionada (3) *
 *======================================================================*
 START-OF-SELECTION.
-  PERFORM load_fues_data.
+  IF p_file IS NOT INITIAL.
+    PERFORM load_fues_data.
+  ENDIF.
   CASE 'X'.
     WHEN rb_user.   PERFORM process_user_role_view.          " Vista Rol-Usuario
     WHEN rb_role.   PERFORM process_role_transaction_view.   " Vista Rol-Transacción
@@ -338,17 +340,20 @@ FORM load_fues_data.
         lv_rule     TYPE string,
         lv_level    TYPE char10.
 
+  IF p_file IS INITIAL.
+    RETURN.
+  ENDIF.
+
   lv_filename = p_file.
 
   TRY.
       " Use GUI_UPLOAD to read the file
       CALL FUNCTION 'GUI_UPLOAD'
         EXPORTING
-          filename                = lv_filename
-          filetype                = 'ASC'
-          has_field_separator     = 'X'
+          filename            = lv_filename
+          filetype            = 'ASC'
         TABLES
-          data_tab                = lt_raw_data
+          data_tab            = lt_raw_data
         EXCEPTIONS
           file_open_error         = 1
           file_read_error         = 2
@@ -369,7 +374,7 @@ FORM load_fues_data.
           OTHERS                  = 17.
 
       IF sy-subrc <> 0.
-        MESSAGE 'Error al leer el archivo Excel. Asegúrese de que esté guardado como CSV o texto delimitado por tabuladores.' TYPE 'E'.
+        MESSAGE 'Error al leer el archivo FUES. Verifique ruta y formato (CSV o tabulado).' TYPE 'W'.
         RETURN.
       ENDIF.
 

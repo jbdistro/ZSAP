@@ -351,6 +351,9 @@ FORM load_fues_data.
 
   lv_filename = p_file.
 
+  " Eliminar comillas que puedan provenir de rutas copiadas
+  REPLACE ALL OCCURRENCES OF '"' IN lv_filename WITH ''.
+
   " Determinar extensión
   SPLIT lv_filename AT '.' INTO TABLE lt_parts.
   READ TABLE lt_parts INDEX lines( lt_parts ) INTO lv_extension.
@@ -475,6 +478,13 @@ FORM load_fues_data.
 
   " Si la lectura vía GUI_UPLOAD falla, intentar leer desde el servidor de aplicaciones
   IF sy-subrc <> 0 OR lt_raw_data IS INITIAL.
+    " Si la ruta parece ser del front-end (ej. contiene ':' o '\'),
+    " no intentar leer desde el servidor de aplicaciones
+    IF lv_filename CS ':' OR lv_filename CS '\'.
+      MESSAGE 'Error al leer el archivo FUES. Verifique ruta y formato (CSV/TSV).' TYPE 'W'.
+      RETURN.
+    ENDIF.
+
     CLEAR lt_raw_data.
     OPEN DATASET lv_filename FOR INPUT IN TEXT MODE ENCODING DEFAULT.
     IF sy-subrc <> 0.

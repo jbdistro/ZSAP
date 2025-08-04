@@ -63,7 +63,7 @@ TYPES: BEGIN OF ty_user_role,
          roles_per_user TYPE i,
          users_per_role TYPE i,
          user_inactive  TYPE c LENGTH 1,
-         fues_level     TYPE char10,
+        fues_level     TYPE string,
        END OF ty_user_role.
 
 *--- Estructura: Relación Usuario ↔ Transacción
@@ -98,7 +98,7 @@ TYPES: BEGIN OF ty_role_transaction,
          role_name   TYPE agr_define-agr_name,
          transaction TYPE tcode,
          description TYPE tstct-ttext,
-         fues_level  TYPE char10,
+         fues_level  TYPE string,
        END OF ty_role_transaction.
 
 *--- Estructura: Relación Transacción ↔ Autorización
@@ -114,13 +114,13 @@ TYPES: BEGIN OF ty_transaction_auth,
 *--- Estructura: Mapeo Transacción ↔ Nivel FUES
 TYPES: BEGIN OF ty_tcode_fues,
          transaction TYPE tcode,
-         fues_level  TYPE char10,
+         fues_level  TYPE string,
        END OF ty_tcode_fues.
 
 *--- Estructura: Nivel FUES por Rol
 TYPES: BEGIN OF ty_role_fues,
          role_name  TYPE agr_define-agr_name,
-         fues_level TYPE char10,
+         fues_level TYPE string,
          adv_ratio  TYPE p DECIMALS 2,
          core_ratio TYPE p DECIMALS 2,
        END OF ty_role_fues.
@@ -128,7 +128,7 @@ TYPES: BEGIN OF ty_role_fues,
 *--- Estructura: Nivel FUES por Usuario
 TYPES: BEGIN OF ty_user_fues,
          user_id    TYPE xubname,
-         fues_level TYPE char10,
+         fues_level TYPE string,
          adv_ratio  TYPE p DECIMALS 2,
          core_ratio TYPE p DECIMALS 2,
        END OF ty_user_fues.
@@ -234,10 +234,10 @@ FORM calculate_role_fues.
   CLEAR gt_fues_role.
 
   LOOP AT gt_role_transaction INTO DATA(ls_rt).
-    DATA(lv_level) = VALUE char10( ).
+    DATA(lv_level) TYPE string VALUE 'NO DISPONIBLE'.
     READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_tx>)
          WITH KEY transaction = ls_rt-transaction.
-    IF sy-subrc = 0.
+    IF sy-subrc = 0 AND <fs_tx>-fues_level IS NOT INITIAL.
       lv_level = <fs_tx>-fues_level.
     ENDIF.
 
@@ -260,6 +260,10 @@ FORM calculate_role_fues.
       WHEN 'SELF SERV'.
         IF <fs_role>-fues_level = space.
           <fs_role>-fues_level = 'SELF SERV'.
+        ENDIF.
+      WHEN OTHERS.
+        IF <fs_role>-fues_level IS INITIAL.
+          <fs_role>-fues_level = 'NO DISPONIBLE'.
         ENDIF.
     ENDCASE.
     <fs_role>-adv_ratio = <fs_role>-adv_ratio.
@@ -285,8 +289,8 @@ FORM calculate_user_fues.
     READ TABLE gt_fues_role ASSIGNING FIELD-SYMBOL(<fs_role>)
          WITH KEY role_name = ls_ur-role_name.
 
-    DATA lv_level TYPE char10 VALUE 'SELF SERV'.
-    IF sy-subrc = 0.
+    DATA lv_level TYPE string VALUE 'NO DISPONIBLE'.
+    IF sy-subrc = 0 AND <fs_role>-fues_level IS NOT INITIAL.
       lv_level = <fs_role>-fues_level.
     ENDIF.
 
@@ -309,6 +313,10 @@ FORM calculate_user_fues.
       WHEN 'SELF SERV'.
         IF <fs_user>-fues_level = space.
           <fs_user>-fues_level = 'SELF SERV'.
+        ENDIF.
+      WHEN OTHERS.
+        IF <fs_user>-fues_level IS INITIAL.
+          <fs_user>-fues_level = 'NO DISPONIBLE'.
         ENDIF.
     ENDCASE.
 
@@ -338,7 +346,7 @@ FORM load_fues_data.
         lt_fields     TYPE TABLE OF string,
         lv_tcode      TYPE tcode,
         lv_rule       TYPE string,
-        lv_level      TYPE char10,
+        lv_level      TYPE string,
         lv_extension  TYPE string,
         lt_parts      TYPE STANDARD TABLE OF string,
         lv_first_line TYPE abap_bool.
@@ -562,7 +570,7 @@ FORM load_fues_excel_alt.
         lt_fields   TYPE TABLE OF string,
         lv_tcode    TYPE tcode,
         lv_rule     TYPE string,
-        lv_level    TYPE char10,
+        lv_level    TYPE string,
         lv_counter  TYPE i.
 
   lv_filename = p_file.

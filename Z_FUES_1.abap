@@ -261,9 +261,15 @@ ENDFORM.
 * Cálculo de nivel FUES para cada rol                                  *
 *=====================================================================*
 FORM calculate_role_fues.
+  TYPES: BEGIN OF ty_role_auth,
+           role_name TYPE agr_1251-agr_name,
+           object    TYPE agr_1251-object,
+           field     TYPE agr_1251-field,
+           low       TYPE agr_1251-low,
+         END OF ty_role_auth.
   DATA: lt_roles     TYPE SORTED TABLE OF agr_name WITH UNIQUE KEY table_line,
-        gt_role_auth TYPE STANDARD TABLE OF agr_1251,
-        ls_auth      LIKE LINE OF gt_role_auth.
+        gt_role_auth TYPE STANDARD TABLE OF ty_role_auth,
+        ls_auth      TYPE ty_role_auth.
 
   CLEAR gt_fues_role.
 
@@ -289,8 +295,10 @@ FORM calculate_role_fues.
     READ TABLE gt_role_auth WITH KEY role_name = ls_rt-role_name BINARY SEARCH TRANSPORTING NO FIELDS.
     IF sy-subrc = 0.
       DATA(lv_idx) = sy-tabix.
-      LOOP AT gt_role_auth INTO ls_auth FROM lv_idx
-           WHILE ls_auth-role_name = ls_rt-role_name.
+      LOOP AT gt_role_auth INTO ls_auth FROM lv_idx.
+        IF ls_auth-role_name <> ls_rt-role_name.
+          EXIT.
+        ENDIF.
         READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_auth>)
              WITH KEY auth_object = ls_auth-object
                       auth_field  = ls_auth-field
@@ -645,15 +653,15 @@ FORM load_fues_data.
       IF lv_type = 'AUTH'.
         IF lv_object IS NOT INITIAL AND lv_field IS NOT INITIAL AND lv_value IS NOT INITIAL AND lv_level IS NOT INITIAL.
           APPEND VALUE ty_auth_fues(
-            auth_object = lv_object,
-            auth_field  = lv_field,
-            auth_value  = lv_value,
+            auth_object = lv_object
+            auth_field  = lv_field
+            auth_value  = lv_value
             fues_level  = lv_level ) TO gt_fues_auth.
         ENDIF.
       ELSE.
         IF lv_tcode IS NOT INITIAL AND lv_level IS NOT INITIAL.
           APPEND VALUE ty_tcode_fues(
-            transaction = lv_tcode,
+            transaction = lv_tcode
             fues_level  = lv_level ) TO gt_fues_tcode.
         ENDIF.
       ENDIF.

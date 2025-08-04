@@ -63,7 +63,7 @@ TYPES: BEGIN OF ty_user_role,
          roles_per_user TYPE i,
          users_per_role TYPE i,
          user_inactive  TYPE c LENGTH 1,
-         fues_level     TYPE char10,
+         fues_level     TYPE char15,
        END OF ty_user_role.
 
 *--- Estructura: Relación Usuario ↔ Transacción
@@ -98,7 +98,7 @@ TYPES: BEGIN OF ty_role_transaction,
          role_name   TYPE agr_define-agr_name,
          transaction TYPE tcode,
          description TYPE tstct-ttext,
-         fues_level  TYPE char10,
+         fues_level  TYPE char15,
        END OF ty_role_transaction.
 
 *--- Estructura: Relación Transacción ↔ Autorización
@@ -114,13 +114,13 @@ TYPES: BEGIN OF ty_transaction_auth,
 *--- Estructura: Mapeo Transacción ↔ Nivel FUES
 TYPES: BEGIN OF ty_tcode_fues,
          transaction TYPE tcode,
-         fues_level  TYPE char10,
+         fues_level  TYPE char15,
        END OF ty_tcode_fues.
 
 *--- Estructura: Nivel FUES por Rol
 TYPES: BEGIN OF ty_role_fues,
          role_name  TYPE agr_define-agr_name,
-         fues_level TYPE char10,
+         fues_level TYPE char15,
          adv_ratio  TYPE p DECIMALS 2,
          core_ratio TYPE p DECIMALS 2,
        END OF ty_role_fues.
@@ -128,7 +128,7 @@ TYPES: BEGIN OF ty_role_fues,
 *--- Estructura: Nivel FUES por Usuario
 TYPES: BEGIN OF ty_user_fues,
          user_id    TYPE xubname,
-         fues_level TYPE char10,
+         fues_level TYPE char15,
          adv_ratio  TYPE p DECIMALS 2,
          core_ratio TYPE p DECIMALS 2,
        END OF ty_user_fues.
@@ -157,8 +157,6 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
 * Pantalla de selección: vistas, filtros, flags(2) *
 *========================================================================*
 
-PARAMETERS p_file TYPE rlgrap-filename.
-
 *--- Bloque 1: Selección de vista
 SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01. " Selección de vista
 
@@ -184,6 +182,8 @@ SELECTION-SCREEN BEGIN OF BLOCK blk2 WITH FRAME TITLE TEXT-b02. " Filtros
     s_object FOR agr_1251-object,         " Filtro por objeto de autorización
     s_fdate  FOR agr_users-from_dat,      " Filtro por fecha desde
     s_tdate  FOR agr_users-to_dat.        " Filtro por fecha hasta
+
+  PARAMETERS p_file TYPE rlgrap-filename. " Archivo de niveles FUES
 
 SELECTION-SCREEN END OF BLOCK blk2.
 
@@ -221,6 +221,8 @@ FORM process_user_role_view.
   PERFORM add_roles_without_users.   " Añadir roles definidos que no tengan usuarios asignados
   PERFORM add_users_without_roles.   " Añadir usuarios sin asignaciones a ningún rol
   PERFORM calculate_counts.          " Calcular cantidad de roles por usuario y usuarios por rol
+  PERFORM get_role_transaction_data. " Obtener transacciones por rol para cálculo FUES
+  PERFORM calculate_role_fues.       " Determinar nivel FUES por rol
   PERFORM calculate_user_fues.       " Determinar nivel FUES por usuario
   PERFORM apply_user_role_filters.   " Filtrar resultados según flags de exclusión
   PERFORM build_user_role_summary.   " Construir resumen cuantitativo de la vista
@@ -234,7 +236,7 @@ FORM calculate_role_fues.
   CLEAR gt_fues_role.
 
   LOOP AT gt_role_transaction INTO DATA(ls_rt).
-    DATA(lv_level) = VALUE char10( ).
+    DATA lv_level TYPE char15 VALUE 'No disponible'.
     READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_tx>)
          WITH KEY transaction = ls_rt-transaction.
     IF sy-subrc = 0.
@@ -244,7 +246,8 @@ FORM calculate_role_fues.
     READ TABLE gt_fues_role ASSIGNING FIELD-SYMBOL(<fs_role>)
          WITH KEY role_name = ls_rt-role_name.
     IF sy-subrc <> 0.
-      DATA(ls_new) = VALUE ty_role_fues( role_name = ls_rt-role_name ).
+      DATA(ls_new) = VALUE ty_role_fues( role_name  = ls_rt-role_name
+                                         fues_level = 'No disponible' ).
       APPEND ls_new TO gt_fues_role ASSIGNING <fs_role>.
     ENDIF.
 
@@ -258,7 +261,7 @@ FORM calculate_role_fues.
         ENDIF.
         <fs_role>-core_ratio = <fs_role>-core_ratio + 1.
       WHEN 'SELF SERV'.
-        IF <fs_role>-fues_level = space.
+        IF <fs_role>-fues_level = 'No disponible'.
           <fs_role>-fues_level = 'SELF SERV'.
         ENDIF.
     ENDCASE.
@@ -285,7 +288,7 @@ FORM calculate_user_fues.
     READ TABLE gt_fues_role ASSIGNING FIELD-SYMBOL(<fs_role>)
          WITH KEY role_name = ls_ur-role_name.
 
-    DATA lv_level TYPE char10 VALUE 'SELF SERV'.
+    DATA lv_level TYPE char15 VALUE 'No disponible'.
     IF sy-subrc = 0.
       lv_level = <fs_role>-fues_level.
     ENDIF.
@@ -293,7 +296,8 @@ FORM calculate_user_fues.
     READ TABLE gt_fues_user ASSIGNING FIELD-SYMBOL(<fs_user>)
          WITH KEY user_id = ls_ur-user_id.
     IF sy-subrc <> 0.
-      DATA(ls_new_user) = VALUE ty_user_fues( user_id = ls_ur-user_id ).
+      DATA(ls_new_user) = VALUE ty_user_fues( user_id    = ls_ur-user_id
+                                             fues_level = 'No disponible' ).
       APPEND ls_new_user TO gt_fues_user ASSIGNING <fs_user>.
     ENDIF.
 
@@ -307,7 +311,7 @@ FORM calculate_user_fues.
         ENDIF.
         <fs_user>-core_ratio = <fs_user>-core_ratio + 1.
       WHEN 'SELF SERV'.
-        IF <fs_user>-fues_level = space.
+        IF <fs_user>-fues_level = 'No disponible'.
           <fs_user>-fues_level = 'SELF SERV'.
         ENDIF.
     ENDCASE.
@@ -338,7 +342,7 @@ FORM load_fues_data.
         lt_fields     TYPE TABLE OF string,
         lv_tcode      TYPE tcode,
         lv_rule       TYPE string,
-        lv_level      TYPE char10,
+        lv_level      TYPE char15,
         lv_extension  TYPE string,
         lt_parts      TYPE STANDARD TABLE OF string,
         lv_first_line TYPE abap_bool.
@@ -562,7 +566,7 @@ FORM load_fues_excel_alt.
         lt_fields   TYPE TABLE OF string,
         lv_tcode    TYPE tcode,
         lv_rule     TYPE string,
-        lv_level    TYPE char10,
+        lv_level    TYPE char15,
         lv_counter  TYPE i.
 
   lv_filename = p_file.
@@ -856,6 +860,7 @@ FORM get_role_transaction_data.
     INTO TABLE @gt_role_transaction.
 
   LOOP AT gt_role_transaction ASSIGNING FIELD-SYMBOL(<fs_rt>).
+    <fs_rt>-fues_level = 'No disponible'.
     READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_map>)
          WITH KEY transaction = <fs_rt>-transaction.
     IF sy-subrc = 0.
@@ -865,8 +870,7 @@ FORM get_role_transaction_data.
 
   " Validación de existencia de datos
   IF sy-subrc <> 0.
-    MESSAGE 'No se hallaron transacciones para los roles seleccionados.' TYPE 'I' DISPLAY LIKE 'E'.
-    LEAVE LIST-PROCESSING.
+    MESSAGE 'No se hallaron transacciones para los roles seleccionados.' TYPE 'I'.
   ENDIF.
 ENDFORM.
 

@@ -329,114 +329,191 @@ ENDFORM.
 * Carga de archivo Excel de clasificación FUES - SOLUTION 1 (Recommended)
 *=====================================================================*
 FORM load_fues_data.
-  " Using GUI_UPLOAD approach - works with Excel saved as CSV/Tab-delimited
+  " Soporta archivos Excel (.xlsx) y CSV/tabulados
   DATA: lt_raw_data TYPE TABLE OF string,
         lv_filename TYPE string,
         lv_line     TYPE string,
         lt_fields   TYPE TABLE OF string,
         lv_tcode    TYPE tcode,
         lv_rule     TYPE string,
-        lv_level    TYPE char10.
+        lv_level    TYPE char10,
+        lv_extension TYPE string.
 
   lv_filename = p_file.
 
-  TRY.
-      " Use GUI_UPLOAD to read the file
-      CALL FUNCTION 'GUI_UPLOAD'
-        EXPORTING
-          filename                = lv_filename
-          filetype                = 'ASC'
-          has_field_separator     = 'X'
-        TABLES
-          data_tab                = lt_raw_data
-        EXCEPTIONS
-          file_open_error         = 1
-          file_read_error         = 2
-          no_batch                = 3
-          gui_refuse_filetransfer = 4
-          invalid_type            = 5
-          no_authority            = 6
-          unknown_error           = 7
-          bad_data_format         = 8
-          header_not_allowed      = 9
-          separator_not_allowed   = 10
-          header_too_long         = 11
-          unknown_dp_error        = 12
-          access_denied           = 13
-          dp_out_of_memory        = 14
-          disk_full               = 15
-          dp_timeout              = 16
-          OTHERS                  = 17.
+  " Obtener la extensión del archivo
+  SPLIT lv_filename AT '.' INTO TABLE DATA(lt_parts).
+  READ TABLE lt_parts INTO lv_extension INDEX lines( lt_parts ).
+  TRANSLATE lv_extension TO LOWER CASE.
 
-      IF sy-subrc <> 0.
-        MESSAGE 'Error al leer el archivo Excel. Asegúrese de que esté guardado como CSV o texto delimitado por tabuladores.' TYPE 'E'.
+  IF lv_extension = 'xlsx' OR lv_extension = 'xls'.
+    " Lectura para archivos Excel nativos
+    DATA: lt_bin_data   TYPE STANDARD TABLE OF x255,
+          lv_len        TYPE i,
+          lv_xstr       TYPE xstring,
+          lo_excel      TYPE REF TO cl_fdt_xl_spreadsheet,
+          lo_worksheet  TYPE REF TO cl_fdt_xl_worksheet,
+          lt_table      TYPE cl_fdt_xl_spreadsheet=>t_table,
+          ls_row        TYPE cl_fdt_xl_spreadsheet=>t_row.
+
+    TRY.
+        CALL METHOD cl_gui_frontend_services=>gui_upload
+          EXPORTING
+            filename   = lv_filename
+            filetype   = 'BIN'
+          IMPORTING
+            filelength = lv_len
+          TABLES
+            data_tab   = lt_bin_data
+          EXCEPTIONS
+            OTHERS     = 1.
+        IF sy-subrc <> 0.
+          MESSAGE 'Error al leer el archivo Excel.' TYPE 'E'.
+          RETURN.
+        ENDIF.
+
+        CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
+          EXPORTING
+            input_length = lv_len
+          IMPORTING
+            buffer       = lv_xstr
+          TABLES
+            binary_tab   = lt_bin_data.
+
+        CREATE OBJECT lo_excel.
+        CALL METHOD lo_excel->load_document_from_xstring
+          EXPORTING
+            i_xstring = lv_xstr.
+
+        lo_worksheet = lo_excel->get_worksheet( 1 ).
+        lt_table = lo_worksheet->get_table( ).
+
+        LOOP AT lt_table INTO ls_row.
+          IF sy-tabix = 1.
+            CONTINUE.
+          ENDIF.
+
+          CLEAR: lv_rule, lv_tcode, lv_level.
+          READ TABLE ls_row INTO lv_rule INDEX 2.
+          READ TABLE ls_row INTO lv_tcode INDEX 5.
+
+          CONDENSE lv_rule NO-GAPS.
+          CONDENSE lv_tcode NO-GAPS.
+
+          IF strlen( lv_rule ) >= 2.
+            CASE lv_rule+0(2).
+              WHEN 'GB'.
+                lv_level = 'AVANZADO'.
+              WHEN 'GC'.
+                lv_level = 'CORE'.
+              WHEN 'GD'.
+                lv_level = 'SELF SERV'.
+              WHEN OTHERS.
+                lv_level = ''.
+            ENDCASE.
+          ENDIF.
+
+          IF lv_tcode IS NOT INITIAL AND lv_level IS NOT INITIAL.
+            APPEND VALUE ty_tcode_fues( transaction = lv_tcode
+                                        fues_level = lv_level ) TO gt_fues_tcode.
+          ENDIF.
+        ENDLOOP.
+
+      CATCH cx_root INTO DATA(lx_fues).
+        MESSAGE lx_fues->get_text( ) TYPE 'E'.
         RETURN.
+    ENDTRY.
+
+  ELSE.
+    " Lectura para archivos de texto (CSV/tabulado)
+    TRY.
+        CALL FUNCTION 'GUI_UPLOAD'
+          EXPORTING
+            filename                = lv_filename
+            filetype                = 'ASC'
+            has_field_separator     = 'X'
+          TABLES
+            data_tab                = lt_raw_data
+          EXCEPTIONS
+            file_open_error         = 1
+            file_read_error         = 2
+            no_batch                = 3
+            gui_refuse_filetransfer = 4
+            invalid_type            = 5
+            no_authority            = 6
+            unknown_error           = 7
+            bad_data_format         = 8
+            header_not_allowed      = 9
+            separator_not_allowed   = 10
+            header_too_long         = 11
+            unknown_dp_error        = 12
+            access_denied           = 13
+            dp_out_of_memory        = 14
+            disk_full               = 15
+            dp_timeout              = 16
+            OTHERS                  = 17.
+
+        IF sy-subrc <> 0.
+          MESSAGE 'Error al leer el archivo. Asegúrese de que el formato sea válido.' TYPE 'E'.
+          RETURN.
+        ENDIF.
+
+      CATCH cx_root INTO DATA(lx_fues_text).
+        MESSAGE lx_fues_text->get_text( ) TYPE 'E'.
+        RETURN.
+    ENDTRY.
+
+    " Procesar las líneas del archivo (saltar encabezado)
+    DATA lv_first_line TYPE abap_bool VALUE abap_true.
+
+    LOOP AT lt_raw_data INTO lv_line.
+      IF lv_first_line = abap_true.
+        lv_first_line = abap_false.
+        CONTINUE.
       ENDIF.
 
-    CATCH cx_root INTO DATA(lx_fues).
-      MESSAGE lx_fues->get_text( ) TYPE 'E'.
-      RETURN.
-  ENDTRY.
+      CLEAR: lt_fields, lv_tcode, lv_rule, lv_level.
 
-  " Procesar las líneas del archivo (saltar encabezado)
-  DATA lv_first_line TYPE abap_bool VALUE abap_true.
+      SPLIT lv_line AT cl_abap_char_utilities=>horizontal_tab INTO TABLE lt_fields.
 
-  LOOP AT lt_raw_data INTO lv_line.
-    " Saltar la primera línea (encabezado)
-    IF lv_first_line = abap_true.
-      lv_first_line = abap_false.
-      CONTINUE.
-    ENDIF.
-
-    " Limpiar variables
-    CLEAR: lt_fields, lv_tcode, lv_rule, lv_level.
-
-    " Dividir la línea por diferentes delimitadores
-    SPLIT lv_line AT cl_abap_char_utilities=>horizontal_tab INTO TABLE lt_fields.
-
-    " Si no hay tabuladores, intentar con punto y coma
-    IF lines( lt_fields ) <= 1.
-      CLEAR lt_fields.
-      SPLIT lv_line AT ';' INTO TABLE lt_fields.
-    ENDIF.
-
-    " Si no hay punto y coma, intentar con coma
-    IF lines( lt_fields ) <= 1.
-      CLEAR lt_fields.
-      SPLIT lv_line AT ',' INTO TABLE lt_fields.
-    ENDIF.
-
-    " Verificar que tenemos suficientes campos (al menos 5 columnas)
-    IF lines( lt_fields ) >= 5.
-      " Obtener los valores de las columnas necesarias
-      READ TABLE lt_fields INTO lv_rule INDEX 2.
-      READ TABLE lt_fields INTO lv_tcode INDEX 5.
-
-      " Limpiar espacios en blanco
-      CONDENSE lv_rule NO-GAPS.
-      CONDENSE lv_tcode NO-GAPS.
-
-      " Determinar el nivel FUES basado en la regla
-      IF strlen( lv_rule ) >= 2.
-        CASE lv_rule+0(2).
-          WHEN 'GB'.
-            lv_level = 'AVANZADO'.
-          WHEN 'GC'.
-            lv_level = 'CORE'.
-          WHEN 'GD'.
-            lv_level = 'SELF SERV'.
-          WHEN OTHERS.
-            lv_level = ''.
-        ENDCASE.
+      IF lines( lt_fields ) <= 1.
+        CLEAR lt_fields.
+        SPLIT lv_line AT ';' INTO TABLE lt_fields.
       ENDIF.
 
-      " Agregar a la tabla interna si ambos valores son válidos
-      IF lv_tcode IS NOT INITIAL AND lv_level IS NOT INITIAL.
-        APPEND VALUE ty_tcode_fues( transaction = lv_tcode
-                                    fues_level = lv_level ) TO gt_fues_tcode.
+      IF lines( lt_fields ) <= 1.
+        CLEAR lt_fields.
+        SPLIT lv_line AT ',' INTO TABLE lt_fields.
       ENDIF.
-    ENDIF.
-  ENDLOOP.
+
+      IF lines( lt_fields ) >= 5.
+        READ TABLE lt_fields INTO lv_rule INDEX 2.
+        READ TABLE lt_fields INTO lv_tcode INDEX 5.
+
+        CONDENSE lv_rule NO-GAPS.
+        CONDENSE lv_tcode NO-GAPS.
+
+        IF strlen( lv_rule ) >= 2.
+          CASE lv_rule+0(2).
+            WHEN 'GB'.
+              lv_level = 'AVANZADO'.
+            WHEN 'GC'.
+              lv_level = 'CORE'.
+            WHEN 'GD'.
+              lv_level = 'SELF SERV'.
+            WHEN OTHERS.
+              lv_level = ''.
+          ENDCASE.
+        ENDIF.
+
+        IF lv_tcode IS NOT INITIAL AND lv_level IS NOT INITIAL.
+          APPEND VALUE ty_tcode_fues( transaction = lv_tcode
+                                      fues_level = lv_level ) TO gt_fues_tcode.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+  ENDIF.
 
   " Mensaje informativo
   IF lines( gt_fues_tcode ) > 0.

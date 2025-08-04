@@ -349,7 +349,8 @@ FORM load_fues_data.
     RETURN.  " FUES opcional
   ENDIF.
 
-  lv_filename = p_file.
+  lv_filename = CONV string( p_file ).
+  REPLACE ALL OCCURRENCES OF '"' IN lv_filename WITH ''.
 
   " Determinar extensión
   SPLIT lv_filename AT '.' INTO TABLE lt_parts.
@@ -458,6 +459,7 @@ FORM load_fues_data.
   ENDIF.
 
   " === Fallback CSV/TSV/TXT: leer como texto plano y parsear ===
+  DATA lv_gui_subrc TYPE sy-subrc.
   TRY.
       CALL FUNCTION 'GUI_UPLOAD'
         EXPORTING
@@ -468,14 +470,33 @@ FORM load_fues_data.
           data_tab            = lt_raw_data
         EXCEPTIONS
           OTHERS              = 1.
-      IF sy-subrc <> 0.
-        MESSAGE 'Error al leer el archivo FUES. Verifique ruta y formato (CSV/TSV).' TYPE 'W'.
-        RETURN.
-      ENDIF.
+      lv_gui_subrc = sy-subrc.
     CATCH cx_root INTO DATA(lx_txt).
-      MESSAGE lx_txt->get_text( ) TYPE 'W'.
-      RETURN.
+      MESSAGE lx_txt->get_text( ) TYPE 'I'.
+      lv_gui_subrc = 1.
   ENDTRY.
+
+  " Si la lectura vía GUI_UPLOAD falla, intentar leer desde el servidor de aplicaciones
+  IF lv_gui_subrc <> 0 OR lt_raw_data IS INITIAL.
+    IF lv_filename CS ':' OR lv_filename CS '\'.
+      MESSAGE |Error al leer el archivo FUES { lv_filename }. Verifique ruta y formato (CSV/TSV).| TYPE 'W'.
+      RETURN.
+    ENDIF.
+    CLEAR lt_raw_data.
+    OPEN DATASET lv_filename FOR INPUT IN TEXT MODE ENCODING DEFAULT.
+    IF sy-subrc <> 0.
+      MESSAGE |Error al leer el archivo FUES { lv_filename }. Verifique ruta y formato (CSV/TSV).| TYPE 'W'.
+      RETURN.
+    ENDIF.
+    DO.
+      READ DATASET lv_filename INTO lv_line.
+      IF sy-subrc <> 0.
+        EXIT.
+      ENDIF.
+      APPEND lv_line TO lt_raw_data.
+    ENDDO.
+    CLOSE DATASET lv_filename.
+  ENDIF.
 
   lv_first_line = abap_true.
   LOOP AT lt_raw_data INTO lv_line.

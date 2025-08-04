@@ -83,6 +83,7 @@ TYPES: BEGIN OF ty_user_object,
          auth_object TYPE agr_1251-object,
          auth_field  TYPE agr_1251-field,
          auth_value  TYPE agr_1251-low,
+         fues_level  TYPE char15,
        END OF ty_user_object.
 
 *--- Estructura: Relación Usuario ↔ Perfil
@@ -109,6 +110,7 @@ TYPES: BEGIN OF ty_transaction_auth,
          auth_object TYPE agr_1251-object,
          auth_field  TYPE agr_1251-field,
          auth_value  TYPE agr_1251-low,
+         fues_level  TYPE char15,
        END OF ty_transaction_auth.
 
 *--- Estructura: Mapeo Transacción ↔ Nivel FUES
@@ -261,73 +263,36 @@ ENDFORM.
 * Cálculo de nivel FUES para cada rol                                  *
 *=====================================================================*
 FORM calculate_role_fues.
-  TYPES: BEGIN OF ty_role_auth,
-           role_name TYPE agr_1251-agr_name,
-           object    TYPE agr_1251-object,
-           field     TYPE agr_1251-field,
-           low       TYPE agr_1251-low,
-         END OF ty_role_auth.
-  DATA: lt_roles     TYPE SORTED TABLE OF agr_name WITH UNIQUE KEY table_line,
-        gt_role_auth TYPE STANDARD TABLE OF ty_role_auth,
-        ls_auth      TYPE ty_role_auth.
+  IF gt_transaction_auth IS INITIAL.
+    PERFORM get_transaction_auth_data.
+  ENDIF.
 
   CLEAR gt_fues_role.
-
-  LOOP AT gt_role_transaction INTO DATA(ls_rt1).
-    INSERT ls_rt1-role_name INTO TABLE lt_roles.
-  ENDLOOP.
-
-  IF lt_roles IS NOT INITIAL.
-    SELECT agr_name AS role_name,
-           object,
-           field,
-           low
-      FROM agr_1251
-      INTO TABLE @gt_role_auth
-      FOR ALL ENTRIES IN @lt_roles
-      WHERE agr_name = @lt_roles-table_line.
-    SORT gt_role_auth BY role_name object field low.
-  ENDIF.
 
   LOOP AT gt_role_transaction INTO DATA(ls_rt).
     DATA(lv_level) = 'No disponible'.
 
-    READ TABLE gt_role_auth WITH KEY role_name = ls_rt-role_name BINARY SEARCH TRANSPORTING NO FIELDS.
+    READ TABLE gt_transaction_auth WITH KEY transaction = ls_rt-transaction BINARY SEARCH TRANSPORTING NO FIELDS.
     IF sy-subrc = 0.
       DATA(lv_idx) = sy-tabix.
-      LOOP AT gt_role_auth INTO ls_auth FROM lv_idx.
-        IF ls_auth-role_name <> ls_rt-role_name.
+      LOOP AT gt_transaction_auth INTO DATA(ls_ta) FROM lv_idx.
+        IF ls_ta-transaction <> ls_rt-transaction.
           EXIT.
         ENDIF.
-        READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_auth>)
-             WITH KEY auth_object = ls_auth-object
-                      auth_field  = ls_auth-field
-                      auth_value  = ls_auth-low
-             BINARY SEARCH.
-        IF sy-subrc = 0.
-          CASE <fs_auth>-fues_level.
-            WHEN 'AVANZADO'.
-              lv_level = 'AVANZADO'.
-              EXIT.
-            WHEN 'CORE'.
-              IF lv_level <> 'AVANZADO'.
-                lv_level = 'CORE'.
-              ENDIF.
-            WHEN 'SELF SERV'.
-              IF lv_level = 'No disponible'.
-                lv_level = 'SELF SERV'.
-              ENDIF.
-          ENDCASE.
-        ENDIF.
+        CASE ls_ta-fues_level.
+          WHEN 'AVANZADO'.
+            lv_level = 'AVANZADO'.
+            EXIT.
+          WHEN 'CORE'.
+            IF lv_level <> 'AVANZADO'.
+              lv_level = 'CORE'.
+            ENDIF.
+          WHEN 'SELF SERV'.
+            IF lv_level = 'No disponible'.
+              lv_level = 'SELF SERV'.
+            ENDIF.
+        ENDCASE.
       ENDLOOP.
-    ENDIF.
-
-    IF lv_level = 'No disponible'.
-      READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_tx>)
-           WITH KEY transaction = ls_rt-transaction BINARY SEARCH.
-      IF sy-subrc = 0.
-        lv_level = <fs_tx>-fues_level.
-      ENDIF.
     ENDIF.
 
     READ TABLE gt_fues_role ASSIGNING FIELD-SYMBOL(<fs_role>)
@@ -989,11 +954,6 @@ FORM get_role_transaction_data.
 
   LOOP AT gt_role_transaction ASSIGNING FIELD-SYMBOL(<fs_rt>).
     <fs_rt>-fues_level = 'No disponible'.
-    READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_map>)
-         WITH KEY transaction = <fs_rt>-transaction.
-    IF sy-subrc = 0.
-      <fs_rt>-fues_level = <fs_map>-fues_level.
-    ENDIF.
   ENDLOOP.
 
   " Validación de existencia de datos
@@ -1085,6 +1045,18 @@ FORM get_user_object_data.
   SORT gt_user_object BY user_id user_group auth_object auth_field auth_value role_name.
   DELETE ADJACENT DUPLICATES FROM gt_user_object
     COMPARING user_id user_group auth_object auth_field auth_value role_name.
+
+  LOOP AT gt_user_object ASSIGNING FIELD-SYMBOL(<fs_uo>).
+    <fs_uo>-fues_level = 'No disponible'.
+    READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_af>)
+         WITH KEY auth_object = <fs_uo>-auth_object
+                  auth_field  = <fs_uo>-auth_field
+                  auth_value  = <fs_uo>-auth_value
+         BINARY SEARCH.
+    IF sy-subrc = 0.
+      <fs_uo>-fues_level = <fs_af>-fues_level.
+    ENDIF.
+  ENDLOOP.
 ENDFORM.
 
 *=====================================================================*
@@ -1169,6 +1141,18 @@ FORM get_transaction_auth_data.
   ENDIF.
 
   SORT gt_transaction_auth BY transaction role_name auth_object auth_field.
+
+  LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>).
+    <fs_ta>-fues_level = 'No disponible'.
+    READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_af>)
+         WITH KEY auth_object = <fs_ta>-auth_object
+                  auth_field  = <fs_ta>-auth_field
+                  auth_value  = <fs_ta>-auth_value
+         BINARY SEARCH.
+    IF sy-subrc = 0.
+      <fs_ta>-fues_level = <fs_af>-fues_level.
+    ENDIF.
+  ENDLOOP.
 ENDFORM.
 
 *=====================================================================*
@@ -1380,6 +1364,7 @@ FORM display_user_object_alv.
       TRY. lo_cols->get_column( 'AUTH_OBJECT')->set_medium_text( 'Objeto' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ).        CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).        CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_uo).
@@ -1454,6 +1439,7 @@ FORM display_trans_auth_alv.
       TRY. lo_cols->get_column( 'AUTH_OBJECT')->set_medium_text( 'Objeto' ).      CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).       CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ta).

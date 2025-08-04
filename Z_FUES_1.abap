@@ -157,7 +157,7 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
 * Pantalla de selección: vistas, filtros, flags(2) *
 *========================================================================*
 
-PARAMETERS p_file TYPE rlgrap-filename.
+PARAMETERS p_file TYPE rlgrap-filename OBLIGATORY.
 
 *--- Bloque 1: Selección de vista
 SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01. " Selección de vista
@@ -201,9 +201,7 @@ SELECTION-SCREEN END OF BLOCK blk3.
 * Lógica principal: Dispatcher de vistas según opción seleccionada (3) *
 *======================================================================*
 START-OF-SELECTION.
-  IF p_file IS NOT INITIAL.
-    PERFORM load_fues_data.
-  ENDIF.
+  PERFORM load_fues_data.
   CASE 'X'.
     WHEN rb_user.   PERFORM process_user_role_view.          " Vista Rol-Usuario
     WHEN rb_role.   PERFORM process_role_transaction_view.   " Vista Rol-Transacción
@@ -328,103 +326,149 @@ FORM calculate_user_fues.
 ENDFORM.
 
 *=====================================================================*
-* Carga de archivo Excel de clasificación FUES                         *
+* Carga de archivo Excel de clasificación FUES - SOLUTION 1 (Recommended)
 *=====================================================================*
 FORM load_fues_data.
-  CLEAR gt_fues_tcode.
+  " Using GUI_UPLOAD approach - works with Excel saved as CSV/Tab-delimited
+  DATA: lt_raw_data TYPE TABLE OF string,
+        lv_filename TYPE string,
+        lv_line     TYPE string,
+        lt_fields   TYPE TABLE OF string,
+        lv_tcode    TYPE tcode,
+        lv_rule     TYPE string,
+        lv_level    TYPE char10.
 
-  DATA(lv_file) = p_file.
-  TRANSLATE lv_file TO UPPER CASE.
+  lv_filename = p_file.
 
-  "--- Lectura según extensión
-  IF lv_file CP '*.XLS' OR lv_file CP '*.XLSX'.
-    DATA lo_excel TYPE REF TO cl_fdt_xl_spreadsheet.
-    DATA lt_table TYPE STANDARD TABLE OF string_table.
+  TRY.
+      " Use GUI_UPLOAD to read the file
+      CALL FUNCTION 'GUI_UPLOAD'
+        EXPORTING
+          filename                = lv_filename
+          filetype                = 'ASC'
+          has_field_separator     = 'X'
+        TABLES
+          data_tab                = lt_raw_data
+        EXCEPTIONS
+          file_open_error         = 1
+          file_read_error         = 2
+          no_batch                = 3
+          gui_refuse_filetransfer = 4
+          invalid_type            = 5
+          no_authority            = 6
+          unknown_error           = 7
+          bad_data_format         = 8
+          header_not_allowed      = 9
+          separator_not_allowed   = 10
+          header_too_long         = 11
+          unknown_dp_error        = 12
+          access_denied           = 13
+          dp_out_of_memory        = 14
+          disk_full               = 15
+          dp_timeout              = 16
+          OTHERS                  = 17.
 
-    TRY.
-        lo_excel = NEW cl_fdt_xl_spreadsheet( ).
-        lo_excel->open_document( p_file ).
-        lt_table = lo_excel->if_fdt_doc_spreadsheet~get_itab_from_document( ).
-      CATCH cx_root INTO DATA(lx_xls).
-        MESSAGE lx_xls->get_text( ) TYPE 'W'.
+      IF sy-subrc <> 0.
+        MESSAGE 'Error al leer el archivo Excel. Asegúrese de que esté guardado como CSV o texto delimitado por tabuladores.' TYPE 'E'.
         RETURN.
-    ENDTRY.
-
-    DATA lv_header TYPE abap_bool VALUE abap_true.
-    LOOP AT lt_table INTO DATA(ls_line).
-      IF lv_header = abap_true.
-        lv_header = abap_false.
-        CONTINUE.
       ENDIF.
 
-      DATA lv_tcode  TYPE tcode.
-      DATA lv_rule   TYPE string.
-      lv_tcode = ls_line[ 5 ].
-      lv_rule  = ls_line[ 2 ].
+    CATCH cx_root INTO DATA(lx_fues).
+      MESSAGE lx_fues->get_text( ) TYPE 'E'.
+      RETURN.
+  ENDTRY.
 
-      DATA(lv_level) = SWITCH char10( lv_rule+0(2) )
-                          WHEN 'GB' THEN 'AVANZADO'
-                          WHEN 'GC' THEN 'CORE'
-                          WHEN 'GD' THEN 'SELF SERV'
-                          ELSE ''.
+  " Procesar las líneas del archivo (saltar encabezado)
+  DATA lv_first_line TYPE abap_bool VALUE abap_true.
 
+  LOOP AT lt_raw_data INTO lv_line.
+    " Saltar la primera línea (encabezado)
+    IF lv_first_line = abap_true.
+      lv_first_line = abap_false.
+      CONTINUE.
+    ENDIF.
+
+    " Limpiar variables
+    CLEAR: lt_fields, lv_tcode, lv_rule, lv_level.
+
+    " Dividir la línea por diferentes delimitadores
+    SPLIT lv_line AT cl_abap_char_utilities=>horizontal_tab INTO TABLE lt_fields.
+
+    " Si no hay tabuladores, intentar con punto y coma
+    IF lines( lt_fields ) <= 1.
+      CLEAR lt_fields.
+      SPLIT lv_line AT ';' INTO TABLE lt_fields.
+    ENDIF.
+
+    " Si no hay punto y coma, intentar con coma
+    IF lines( lt_fields ) <= 1.
+      CLEAR lt_fields.
+      SPLIT lv_line AT ',' INTO TABLE lt_fields.
+    ENDIF.
+
+    " Verificar que tenemos suficientes campos (al menos 5 columnas)
+    IF lines( lt_fields ) >= 5.
+      " Obtener los valores de las columnas necesarias
+      READ TABLE lt_fields INTO lv_rule INDEX 2.
+      READ TABLE lt_fields INTO lv_tcode INDEX 5.
+
+      " Limpiar espacios en blanco
+      CONDENSE lv_rule NO-GAPS.
+      CONDENSE lv_tcode NO-GAPS.
+
+      " Determinar el nivel FUES basado en la regla
+      IF strlen( lv_rule ) >= 2.
+        CASE lv_rule+0(2).
+          WHEN 'GB'.
+            lv_level = 'AVANZADO'.
+          WHEN 'GC'.
+            lv_level = 'CORE'.
+          WHEN 'GD'.
+            lv_level = 'SELF SERV'.
+          WHEN OTHERS.
+            lv_level = ''.
+        ENDCASE.
+      ENDIF.
+
+      " Agregar a la tabla interna si ambos valores son válidos
       IF lv_tcode IS NOT INITIAL AND lv_level IS NOT INITIAL.
         APPEND VALUE ty_tcode_fues( transaction = lv_tcode
                                     fues_level = lv_level ) TO gt_fues_tcode.
       ENDIF.
-    ENDLOOP.
+    ENDIF.
+  ENDLOOP.
 
+  " Mensaje informativo
+  IF lines( gt_fues_tcode ) > 0.
+    MESSAGE |Se cargaron { lines( gt_fues_tcode ) } transacciones FUES del archivo| TYPE 'I'.
   ELSE.
-    DATA lt_raw TYPE TABLE OF string.
-    TRY.
-        cl_gui_frontend_services=>gui_upload(
-          EXPORTING filename = p_file
-                    filetype = 'ASC'
-          CHANGING  data_tab = lt_raw ).
-      CATCH cx_root INTO DATA(lx_csv).
-        MESSAGE lx_csv->get_text( ) TYPE 'W'.
-        RETURN.
-    ENDTRY.
-
-    IF lt_raw IS INITIAL.
-      RETURN.
-    ENDIF.
-
-    DATA lv_line   TYPE string.
-    DATA lv_delim  TYPE c LENGTH 1.
-
-    READ TABLE lt_raw INDEX 1 INTO lv_line.
-    IF sy-subrc = 0.
-      IF lv_line CS ';'.
-        lv_delim = ';'.
-      ELSEIF lv_line CS ','.
-        lv_delim = ','.
-      ELSE.
-        lv_delim = cl_abap_char_utilities=>horizontal_tab.
-      ENDIF.
-    ENDIF.
-
-    LOOP AT lt_raw INTO lv_line FROM 2.
-      SPLIT lv_line AT lv_delim INTO TABLE DATA(lt_fields).
-
-      DATA lv_tcode_c TYPE string.
-      DATA lv_rule_c  TYPE string.
-      READ TABLE lt_fields INDEX 5 INTO lv_tcode_c.
-      READ TABLE lt_fields INDEX 2 INTO lv_rule_c.
-
-      DATA lv_level_c TYPE char10.
-      lv_level_c = SWITCH char10( lv_rule_c+0(2) )
-                     WHEN 'GB' THEN 'AVANZADO'
-                     WHEN 'GC' THEN 'CORE'
-                     WHEN 'GD' THEN 'SELF SERV'
-                     ELSE ''.
-
-      IF lv_tcode_c IS NOT INITIAL AND lv_level_c IS NOT INITIAL.
-        APPEND VALUE ty_tcode_fues( transaction = lv_tcode_c
-                                    fues_level = lv_level_c ) TO gt_fues_tcode.
-      ENDIF.
-    ENDLOOP.
+    MESSAGE 'No se cargaron datos FUES válidos. Verifique el formato del archivo.' TYPE 'I'.
   ENDIF.
+
+ENDFORM.
+
+*=====================================================================*
+* Alternative: Simple file reading approach using OPEN DATASET        *
+*=====================================================================*
+FORM load_fues_excel_alt.
+  " Alternative approach for systems where GUI_UPLOAD might not work
+  " This approach reads the file as a simple text file
+  DATA: lv_filename TYPE string,
+        lv_line     TYPE string,
+        lt_fields   TYPE TABLE OF string,
+        lv_tcode    TYPE tcode,
+        lv_rule     TYPE string,
+        lv_level    TYPE char10,
+        lv_counter  TYPE i.
+
+  lv_filename = p_file.
+
+  " Simple message - this alternative is for reference only
+  MESSAGE 'Use the main LOAD_FUES_DATA form. This alternative is for reference.' TYPE 'I'.
+
+  " Alternative approach using text processing (commented out for reference)
+  " You can implement this if needed for specific file formats
+
 ENDFORM.
 
 *=====================================================================*

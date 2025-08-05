@@ -164,8 +164,8 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       gt_user_object       TYPE STANDARD TABLE OF ty_user_object,
       gt_user_profile      TYPE STANDARD TABLE OF ty_user_profile,
       gt_user_basic        TYPE STANDARD TABLE OF ty_user_basic,
-      gt_fues_tcode        TYPE STANDARD TABLE OF ty_tcode_fues,
-      gt_fues_auth         TYPE STANDARD TABLE OF ty_auth_fues,
+      gt_fues_tcode        TYPE SORTED TABLE  OF ty_tcode_fues WITH UNIQUE KEY transaction,
+      gt_fues_auth         TYPE HASHED TABLE  OF ty_auth_fues WITH UNIQUE KEY auth_object auth_field auth_value,
       gt_fues_role         TYPE STANDARD TABLE OF ty_role_fues,
       gt_fues_user         TYPE STANDARD TABLE OF ty_user_fues,
       gt_summary           TYPE STANDARD TABLE OF ty_summary,
@@ -424,6 +424,7 @@ FORM load_fues_data.
         lt_parts      TYPE STANDARD TABLE OF string,
         lv_first_line TYPE abap_bool,
         lv_type       TYPE string,
+        lv_step       TYPE string,
         lv_object     TYPE agr_1251-object,
         lv_field      TYPE agr_1251-field,
         lv_value      TYPE agr_1251-low.
@@ -511,17 +512,29 @@ FORM load_fues_data.
     ENDIF.
 
     IF lines( lt_fields ) >= 8.
+      READ TABLE lt_fields INDEX 1 INTO lv_step.
       READ TABLE lt_fields INDEX 4 INTO lv_type.
+      IF lv_step IS NOT INITIAL.
+        CONDENSE lv_step NO-GAPS.
+      ENDIF.
+      TRANSLATE lv_type TO UPPER CASE.
+      IF lv_step <> '100' AND lv_step <> '200' AND lv_step <> '300'.
+        CONTINUE.
+      ENDIF.
+      IF lv_type <> 'AUTH'.
+        CONTINUE.
+      ENDIF.
+
       READ TABLE lt_fields INDEX 2 INTO lv_rule.
       READ TABLE lt_fields INDEX 6 INTO lv_object.
       READ TABLE lt_fields INDEX 7 INTO lv_field.
       READ TABLE lt_fields INDEX 8 INTO lv_value.
 
-      TRANSLATE: lv_type TO UPPER CASE, lv_rule TO UPPER CASE.
-      CONDENSE:  lv_rule  NO-GAPS,
-                 lv_object NO-GAPS,
-                 lv_field  NO-GAPS,
-                 lv_value  NO-GAPS.
+      TRANSLATE lv_rule TO UPPER CASE.
+      CONDENSE: lv_rule  NO-GAPS,
+                lv_object NO-GAPS,
+                lv_field  NO-GAPS,
+                lv_value  NO-GAPS.
 
       CLEAR lv_level.
       IF strlen( lv_rule ) >= 2.
@@ -533,16 +546,30 @@ FORM load_fues_data.
       ENDIF.
 
       IF lv_object IS NOT INITIAL AND lv_field IS NOT INITIAL AND lv_value IS NOT INITIAL AND lv_level IS NOT INITIAL.
-        APPEND VALUE ty_auth_fues(
-          auth_object = lv_object
-          auth_field  = lv_field
-          auth_value  = lv_value
-          fues_level  = lv_level ) TO gt_fues_auth.
+        READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_auth>)
+             WITH TABLE KEY auth_object = lv_object auth_field = lv_field auth_value = lv_value.
+        IF sy-subrc = 0.
+          CASE lv_level.
+            WHEN 'AVANZADO'. <fs_auth>-fues_level = 'AVANZADO'.
+            WHEN 'CORE'.
+              IF <fs_auth>-fues_level <> 'AVANZADO'.
+                <fs_auth>-fues_level = 'CORE'.
+              ENDIF.
+            WHEN 'SELF SERV'.
+              IF <fs_auth>-fues_level = '' OR <fs_auth>-fues_level = 'No disponible'.
+                <fs_auth>-fues_level = 'SELF SERV'.
+              ENDIF.
+          ENDCASE.
+        ELSE.
+          INSERT VALUE ty_auth_fues(
+            auth_object = lv_object
+            auth_field  = lv_field
+            auth_value  = lv_value
+            fues_level  = lv_level ) INTO TABLE gt_fues_auth.
+        ENDIF.
       ENDIF.
     ENDIF.
   ENDLOOP.
-
-  SORT gt_fues_auth BY auth_object auth_field auth_value.
 
   IF gt_fues_auth IS NOT INITIAL.
     gv_fues_enabled = abap_true.
@@ -562,10 +589,9 @@ FORM calculate_transaction_fues.
     DATA(lv_level) = 'No disponible'.
 
     READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_fues>)
-         WITH KEY auth_object = <fs_ta>-auth_object
-                  auth_field  = <fs_ta>-auth_field
-                  auth_value  = <fs_ta>-auth_value
-         BINARY SEARCH.
+         WITH TABLE KEY auth_object = <fs_ta>-auth_object
+                              auth_field  = <fs_ta>-auth_field
+                              auth_value  = <fs_ta>-auth_value.
     IF sy-subrc = 0.
       lv_level = <fs_fues>-fues_level.
     ENDIF.
@@ -573,11 +599,11 @@ FORM calculate_transaction_fues.
     <fs_ta>-fues_level = lv_level.
 
     READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_map>)
-         WITH KEY transaction = <fs_ta>-transaction BINARY SEARCH.
-      IF sy-subrc <> 0.
-        APPEND VALUE ty_tcode_fues( transaction = <fs_ta>-transaction
-                                    fues_level  = lv_level ) TO gt_fues_tcode.
-      ELSE.
+         WITH TABLE KEY transaction = <fs_ta>-transaction.
+    IF sy-subrc <> 0.
+      INSERT VALUE ty_tcode_fues( transaction = <fs_ta>-transaction
+                                  fues_level  = lv_level ) INTO TABLE gt_fues_tcode.
+    ELSE.
       CASE lv_level.
         WHEN 'AVANZADO'.
           <fs_map>-fues_level = 'AVANZADO'.
@@ -592,8 +618,6 @@ FORM calculate_transaction_fues.
       ENDCASE.
     ENDIF.
   ENDLOOP.
-
-  SORT gt_fues_tcode BY transaction.
   SORT gt_transaction_auth BY transaction role_name auth_object auth_field.
 ENDFORM.
 

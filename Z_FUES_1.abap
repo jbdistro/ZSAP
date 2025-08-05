@@ -184,7 +184,7 @@ SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01. " Selección de 
   PARAMETERS r_usr_tx  RADIOBUTTON GROUP rb1.              " Vista: Usuario–Transacción
   PARAMETERS r_usrobj  RADIOBUTTON GROUP rb1.              " Vista: Usuario–Objeto
   PARAMETERS r_uprof   RADIOBUTTON GROUP rb1.              " Vista: Usuario–Perfil
-  PARAMETERS r_usrfues RADIOBUTTON GROUP rb1.              " Vista: Usuarios (Nivel FUES)
+  PARAMETERS r_ufues RADIOBUTTON GROUP rb1.                " Vista: Usuarios (Nivel FUES)
   PARAMETERS rb_trans  RADIOBUTTON GROUP rb1.              " Vista: Transacción–Autorización
 
 SELECTION-SCREEN END OF BLOCK blk1.
@@ -228,7 +228,7 @@ START-OF-SELECTION.
     WHEN r_usr_tx.  PERFORM process_user_tcode_view.         " Vista Usuario-Transacción
     WHEN r_usrobj.  PERFORM process_user_object_view.        " Vista Usuario-Objeto
     WHEN r_uprof.   PERFORM process_user_profile_view.       " Vista Usuario-Perfil
-    WHEN r_usrfues. PERFORM process_user_fues_view.          " Vista Usuarios (Nivel FUES)
+    WHEN r_ufues.  PERFORM process_user_fues_view.          " Vista Usuarios (Nivel FUES)
     WHEN rb_trans.  PERFORM process_transaction_auth_view.   " Vista Transacción-Autorización
   ENDCASE.
 
@@ -1144,6 +1144,17 @@ ENDFORM.
 * Obtener usuarios básicos y estado de actividad                      *
 *=====================================================================*
 FORM get_user_basic_data.
+  TYPES: BEGIN OF ty_user,
+           user_id    TYPE usr02-bname,
+           user_group TYPE usr02-class,
+           gltgv      TYPE usr02-gltgv,
+         END OF ty_user.
+
+  DATA: lt_users      TYPE STANDARD TABLE OF ty_user,
+        ls_user       TYPE ty_user,
+        lv_active     TYPE c LENGTH 1,
+        ls_user_basic TYPE ty_user_basic.
+
   CLEAR gt_user_basic.
 
   SELECT bname AS user_id,
@@ -1153,18 +1164,20 @@ FORM get_user_basic_data.
     WHERE bname IN @s_user
       AND class IN @s_group
       AND ( @p_inact = 'X' OR gltgv >= @sy-datum OR gltgv = '00000000' )
-    INTO TABLE @DATA(lt_users).
+    INTO TABLE @lt_users.
 
-  LOOP AT lt_users INTO DATA(ls_user).
-    DATA(lv_active) TYPE c LENGTH 1.
+  LOOP AT lt_users INTO ls_user.
+    CLEAR: lv_active, ls_user_basic.
     IF ls_user-gltgv >= sy-datum OR ls_user-gltgv = '00000000'.
       lv_active = 'X'.
     ENDIF.
-    APPEND VALUE ty_user_basic(
-             user_id    = ls_user-user_id,
-             user_group = ls_user-user_group,
-             active     = lv_active,
-             fues_level = 'No disponible' ) TO gt_user_basic.
+
+    ls_user_basic-user_id    = ls_user-user_id.
+    ls_user_basic-user_group = ls_user-user_group.
+    ls_user_basic-active     = lv_active.
+    ls_user_basic-fues_level = 'No disponible'.
+
+    APPEND ls_user_basic TO gt_user_basic.
   ENDLOOP.
 
   SORT gt_user_basic BY user_id.

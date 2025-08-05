@@ -83,6 +83,7 @@ TYPES: BEGIN OF ty_user_object,
          auth_object TYPE agr_1251-object,
          auth_field  TYPE agr_1251-field,
          auth_value  TYPE agr_1251-low,
+         fues_level  TYPE char15,
        END OF ty_user_object.
 
 *--- Estructura: Relación Usuario ↔ Perfil
@@ -1029,7 +1030,7 @@ FORM get_user_object_data.
       AND au~object  IN @s_object
       AND u~class    IN @s_group
       AND ( @p_inact = 'X' OR u~gltgv >= @sy-datum OR u~gltgv = '00000000' )
-    INTO TABLE @gt_user_object.
+    INTO CORRESPONDING FIELDS OF TABLE @gt_user_object.
 
   " Validación de existencia de datos
   IF sy-subrc <> 0.
@@ -1040,6 +1041,19 @@ FORM get_user_object_data.
   SORT gt_user_object BY user_id user_group auth_object auth_field auth_value role_name.
   DELETE ADJACENT DUPLICATES FROM gt_user_object
     COMPARING user_id user_group auth_object auth_field auth_value role_name.
+
+  LOOP AT gt_user_object ASSIGNING FIELD-SYMBOL(<fs_uo>).
+    <fs_uo>-fues_level = 'No disponible'.
+    IF gv_fues_enabled = abap_true.
+      READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_fues>)
+           WITH TABLE KEY auth_object = <fs_uo>-auth_object
+                                    auth_field  = <fs_uo>-auth_field
+                                    auth_value  = <fs_uo>-auth_value.
+      IF sy-subrc = 0.
+        <fs_uo>-fues_level = <fs_fues>-fues_level.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
 ENDFORM.
 
 *=====================================================================*
@@ -1132,7 +1146,7 @@ FORM calculate_user_basic_fues.
     WHERE r~uname  IN @s_user
       AND u~class IN @s_group
       AND ( @p_inact = 'X' OR u~gltgv >= @sy-datum OR u~gltgv = '00000000' )
-    INTO TABLE @lt_user_obj.
+    INTO CORRESPONDING FIELDS OF TABLE @lt_user_obj.
 
   LOOP AT lt_user_obj INTO DATA(ls_obj).
     READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_fues>)
@@ -1444,6 +1458,7 @@ FORM display_user_object_alv.
       TRY. lo_cols->get_column( 'AUTH_OBJECT')->set_medium_text( 'Objeto' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ).        CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).        CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'FUES' ).         CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_uo).
@@ -1542,6 +1557,7 @@ FORM display_trans_auth_alv.
       TRY. lo_cols->get_column( 'AUTH_OBJECT')->set_medium_text( 'Objeto' ).      CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).       CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'FUES' ).        CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ta).

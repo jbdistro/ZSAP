@@ -964,6 +964,9 @@ ENDFORM.
 * Obtener relación Usuario ↔ Transacción                              *
 *=====================================================================*
 FORM get_user_tcode_data.
+  FIELD-SYMBOLS:
+    <ls_ut>  LIKE LINE OF gt_user_tcode,
+    <fs_map> LIKE LINE OF gt_fues_tcode.
   SELECT r~uname    AS user_id,
          u~class    AS user_group,
          t~agr_name AS role_name,
@@ -989,7 +992,7 @@ FORM get_user_tcode_data.
   SORT gt_user_tcode BY user_id user_group transaction role_name.
   DELETE ADJACENT DUPLICATES FROM gt_user_tcode COMPARING user_id user_group transaction role_name.
 
-  LOOP AT gt_user_tcode ASSIGNING FIELD-SYMBOL(<ls_ut>).
+  LOOP AT gt_user_tcode ASSIGNING <ls_ut>.
     <ls_ut>-fues_level = 'No disponible'.
   ENDLOOP.
 
@@ -1000,8 +1003,8 @@ FORM get_user_tcode_data.
       ENDIF.
       PERFORM calculate_transaction_fues.
     ENDIF.
-    LOOP AT gt_user_tcode ASSIGNING FIELD-SYMBOL(<ls_ut>).
-      READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_map>) WITH KEY transaction = <ls_ut>-transaction.
+    LOOP AT gt_user_tcode ASSIGNING <ls_ut>.
+      READ TABLE gt_fues_tcode ASSIGNING <fs_map> WITH KEY transaction = <ls_ut>-transaction.
       IF sy-subrc = 0.
         <ls_ut>-fues_level = <fs_map>-fues_level.
       ENDIF.

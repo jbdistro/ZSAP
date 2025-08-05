@@ -1202,12 +1202,11 @@ FORM get_transaction_auth_data.
       INNER JOIN agr_define AS a ON t~agr_name = a~agr_name
       LEFT JOIN tstct AS s ON t~tcode = s~tcode AND s~sprsl = @sy-langu
       INNER JOIN agr_1251 AS au ON a~agr_name = au~agr_name
-      FOR ALL ENTRIES IN @gt_fues_auth
+      INNER JOIN @gt_fues_auth AS f ON au~object = f~auth_object
+                                   AND au~field  = f~auth_field
+                                   AND au~low    = f~auth_value
       WHERE t~tcode    IN @s_tcode
         AND a~agr_name IN @s_role
-        AND au~object  = @gt_fues_auth-auth_object
-        AND au~field   = @gt_fues_auth-auth_field
-        AND au~low     = @gt_fues_auth-auth_value
       INTO TABLE @gt_transaction_auth.
   ELSE.
     SELECT t~tcode    AS transaction,

@@ -1190,21 +1190,43 @@ ENDFORM.
 * Obtener relación Transacción ↔ Objeto de autorización                *
 *=====================================================================*
 FORM get_transaction_auth_data.
-  SELECT t~tcode    AS transaction,
-         a~agr_name AS role_name,
-         s~ttext    AS description,
-         au~object  AS auth_object,
-         au~field   AS auth_field,
-         au~low     AS auth_value,
-         'No disponible' AS fues_level
-    FROM agr_tcodes AS t
-    INNER JOIN agr_define AS a ON t~agr_name = a~agr_name
-    LEFT JOIN tstct AS s ON t~tcode = s~tcode AND s~sprsl = @sy-langu
-    LEFT JOIN agr_1251 AS au ON a~agr_name = au~agr_name
-    WHERE t~tcode    IN @s_tcode
-      AND a~agr_name IN @s_role
-      AND au~object  IN @s_object
-    INTO TABLE @gt_transaction_auth.
+  " Si el mapa FUES está cargado, limitar la búsqueda a esas autorizaciones
+  IF gv_fues_enabled = abap_true AND gt_fues_auth IS NOT INITIAL.
+    SELECT t~tcode    AS transaction,
+           a~agr_name AS role_name,
+           s~ttext    AS description,
+           au~object  AS auth_object,
+           au~field   AS auth_field,
+           au~low     AS auth_value,
+           'No disponible' AS fues_level
+      FROM agr_tcodes AS t
+      INNER JOIN agr_define AS a ON t~agr_name = a~agr_name
+      LEFT JOIN tstct AS s ON t~tcode = s~tcode AND s~sprsl = @sy-langu
+      INNER JOIN agr_1251 AS au ON a~agr_name = au~agr_name
+      FOR ALL ENTRIES IN @gt_fues_auth
+      WHERE t~tcode    IN @s_tcode
+        AND a~agr_name IN @s_role
+        AND au~object  = @gt_fues_auth-auth_object
+        AND au~field   = @gt_fues_auth-auth_field
+        AND au~low     = @gt_fues_auth-auth_value
+      INTO TABLE @gt_transaction_auth.
+  ELSE.
+    SELECT t~tcode    AS transaction,
+           a~agr_name AS role_name,
+           s~ttext    AS description,
+           au~object  AS auth_object,
+           au~field   AS auth_field,
+           au~low     AS auth_value,
+           'No disponible' AS fues_level
+      FROM agr_tcodes AS t
+      INNER JOIN agr_define AS a ON t~agr_name = a~agr_name
+      LEFT JOIN tstct AS s ON t~tcode = s~tcode AND s~sprsl = @sy-langu
+      LEFT JOIN agr_1251 AS au ON a~agr_name = au~agr_name
+      WHERE t~tcode    IN @s_tcode
+        AND a~agr_name IN @s_role
+        AND au~object  IN @s_object
+      INTO TABLE @gt_transaction_auth.
+  ENDIF.
 
   " Validación de existencia de datos
   IF sy-subrc <> 0.

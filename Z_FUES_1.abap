@@ -109,6 +109,7 @@ TYPES: BEGIN OF ty_transaction_auth,
          auth_object TYPE agr_1251-object,
          auth_field  TYPE agr_1251-field,
          auth_value  TYPE agr_1251-low,
+         fues_level  TYPE char15,
        END OF ty_transaction_auth.
 
 *--- Estructura: Mapeo Transacción ↔ Nivel FUES
@@ -272,66 +273,35 @@ ENDFORM.
 * Cálculo de nivel FUES para cada rol                                  *
 *=====================================================================*
 FORM calculate_role_fues.
-  TYPES: BEGIN OF ty_role_auth,
-           role_name TYPE agr_1251-agr_name,
-           object    TYPE agr_1251-object,
-           field     TYPE agr_1251-field,
-           low       TYPE agr_1251-low,
-         END OF ty_role_auth.
-  DATA: lt_roles     TYPE SORTED TABLE OF agr_name WITH UNIQUE KEY table_line,
-        gt_role_auth TYPE STANDARD TABLE OF ty_role_auth,
-        ls_auth      TYPE ty_role_auth.
-
   CLEAR gt_fues_role.
 
-  LOOP AT gt_role_transaction INTO DATA(ls_rt1).
-    INSERT ls_rt1-role_name INTO TABLE lt_roles.
-  ENDLOOP.
-
-  IF lt_roles IS NOT INITIAL.
-    SELECT agr_name AS role_name,
-           object,
-           field,
-           low
-      FROM agr_1251
-      INTO TABLE @gt_role_auth
-      FOR ALL ENTRIES IN @lt_roles
-      WHERE agr_name = @lt_roles-table_line.
-    SORT gt_role_auth BY role_name object field low.
+  IF gt_transaction_auth IS INITIAL.
+    PERFORM get_transaction_auth_data.
+  ENDIF.
+  IF gt_fues_tcode IS INITIAL.
+    PERFORM calculate_transaction_fues.
   ENDIF.
 
   LOOP AT gt_role_transaction INTO DATA(ls_rt).
     DATA(lv_level) = 'No disponible'.
 
-    READ TABLE gt_role_auth WITH KEY role_name = ls_rt-role_name BINARY SEARCH TRANSPORTING NO FIELDS.
-    IF sy-subrc = 0.
-      DATA(lv_idx) = sy-tabix.
-      LOOP AT gt_role_auth INTO ls_auth FROM lv_idx.
-        IF ls_auth-role_name <> ls_rt-role_name.
+    LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>)
+         WHERE role_name = ls_rt-role_name
+           AND transaction = ls_rt-transaction.
+      CASE <fs_ta>-fues_level.
+        WHEN 'AVANZADO'.
+          lv_level = 'AVANZADO'.
           EXIT.
-        ENDIF.
-        READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_auth>)
-             WITH KEY auth_object = ls_auth-object
-                      auth_field  = ls_auth-field
-                      auth_value  = ls_auth-low
-             BINARY SEARCH.
-        IF sy-subrc = 0.
-          CASE <fs_auth>-fues_level.
-            WHEN 'AVANZADO'.
-              lv_level = 'AVANZADO'.
-              EXIT.
-            WHEN 'CORE'.
-              IF lv_level <> 'AVANZADO'.
-                lv_level = 'CORE'.
-              ENDIF.
-            WHEN 'SELF SERV'.
-              IF lv_level = 'No disponible'.
-                lv_level = 'SELF SERV'.
-              ENDIF.
-          ENDCASE.
-        ENDIF.
-      ENDLOOP.
-    ENDIF.
+        WHEN 'CORE'.
+          IF lv_level <> 'AVANZADO'.
+            lv_level = 'CORE'.
+          ENDIF.
+        WHEN 'SELF SERV'.
+          IF lv_level = 'No disponible'.
+            lv_level = 'SELF SERV'.
+          ENDIF.
+      ENDCASE.
+    ENDLOOP.
 
     IF lv_level = 'No disponible'.
       READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_tx>)
@@ -448,7 +418,6 @@ FORM load_fues_data.
         lv_filename   TYPE string,
         lv_line       TYPE string,
         lt_fields     TYPE TABLE OF string,
-        lv_tcode      TYPE tcode,
         lv_rule       TYPE string,
         lv_level      TYPE char15,
         lv_extension  TYPE string,
@@ -477,108 +446,12 @@ FORM load_fues_data.
   READ TABLE lt_parts INDEX lines( lt_parts ) INTO lv_extension.
   TRANSLATE lv_extension TO LOWER CASE.
 
-  " === Soporte .XLS (no XLSX) usando ALSM_EXCEL_TO_INTERNAL_TABLE ===
-  IF lv_extension = 'xls'.
-    DATA: lt_xls TYPE STANDARD TABLE OF alsmex_tabline,
-          ls_xls TYPE alsmex_tabline,
-          lv_row TYPE i VALUE 0,
-          l_rule TYPE string,
-          l_tcod TYPE tcode.
-
-    TRY.
-        CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
-          EXPORTING
-            filename                = lv_filename
-            i_begin_col             = 1
-            i_begin_row             = 1
-            i_end_col               = 50
-            i_end_row               = 99999
-          TABLES
-            intern                  = lt_xls
-          EXCEPTIONS
-            inconsistent_parameters = 1
-            upload_ole              = 2
-            OTHERS                  = 3.
-
-        IF sy-subrc <> 0.
-          MESSAGE 'No se pudo leer .XLS (ALSM). Se intentará como texto.' TYPE 'W'.
-        ELSE.
-          " Recorrer por filas; se espera Regla en col=2 y TCODE en col=5
-          LOOP AT lt_xls INTO ls_xls.
-            IF lv_row = 0.
-              lv_row = ls_xls-row.
-            ENDIF.
-
-            IF ls_xls-row <> lv_row.
-              " procesar fila anterior
-              IF l_rule IS NOT INITIAL AND l_tcod IS NOT INITIAL.
-                TRANSLATE l_rule TO UPPER CASE.
-                CONDENSE  l_rule NO-GAPS.
-                CONDENSE  l_tcod NO-GAPS.
-
-                CLEAR lv_level.
-                IF strlen( l_rule ) >= 2.
-                  CASE l_rule+0(2).
-                    WHEN 'GB'. lv_level = 'AVANZADO'.
-                    WHEN 'GC'. lv_level = 'CORE'.
-                    WHEN 'GD'. lv_level = 'SELF SERV'.
-                  ENDCASE.
-                ENDIF.
-
-                IF lv_level IS NOT INITIAL.
-                  APPEND VALUE ty_tcode_fues( transaction = l_tcod
-                                              fues_level  = lv_level ) TO gt_fues_tcode.
-                ENDIF.
-              ENDIF.
-
-              " reset para nueva fila
-              CLEAR: l_rule, l_tcod.
-              lv_row = ls_xls-row.
-            ENDIF.
-
-            CASE ls_xls-col.
-              WHEN 2. l_rule = ls_xls-value.
-              WHEN 5. l_tcod = ls_xls-value.
-            ENDCASE.
-          ENDLOOP.
-
-          " procesar última fila
-          IF l_rule IS NOT INITIAL AND l_tcod IS NOT INITIAL.
-            TRANSLATE l_rule TO UPPER CASE.
-            CONDENSE  l_rule NO-GAPS.
-            CONDENSE  l_tcod NO-GAPS.
-
-            CLEAR lv_level.
-            IF strlen( l_rule ) >= 2.
-              CASE l_rule+0(2).
-                WHEN 'GB'. lv_level = 'AVANZADO'.
-                WHEN 'GC'. lv_level = 'CORE'.
-                WHEN 'GD'. lv_level = 'SELF SERV'.
-              ENDCASE.
-            ENDIF.
-
-            IF lv_level IS NOT INITIAL.
-              APPEND VALUE ty_tcode_fues( transaction = l_tcod
-                                          fues_level  = lv_level ) TO gt_fues_tcode.
-            ENDIF.
-          ENDIF.
-
-          MESSAGE |Se cargaron { lines( gt_fues_tcode ) } transacciones FUES desde XLS.| TYPE 'I'.
-          RETURN. " listo
-        ENDIF.
-
-      CATCH cx_root INTO DATA(lx_xls).
-        MESSAGE lx_xls->get_text( ) TYPE 'W'.
-        " caer a lectura texto
-    ENDTRY.
-
-  ELSEIF lv_extension = 'xlsx'.
-    " No hay lector XLSX estándar sin FDT. Sugerir CSV.
-    MESSAGE 'XLSX no soportado en este sistema sin clases FDT. Guarde como CSV y reintente.' TYPE 'W'.
-    " se continúa intentando como texto por si el archivo es texto con extensión .xlsx
+  " Solo se soporta CSV/TSV/TXT con columnas de autorización.
+  IF lv_extension = 'xls' OR lv_extension = 'xlsx'.
+    MESSAGE 'Utilice archivo CSV con columnas: Regla, Tipo, Objeto, Campo, Valor.' TYPE 'W'.
   ENDIF.
 
-  " === Fallback CSV/TSV/TXT: leer como texto plano y parsear ===
+  " === Leer CSV/TSV/TXT y parsear ===
   TRY.
       CALL FUNCTION 'GUI_UPLOAD'
         EXPORTING
@@ -640,14 +513,12 @@ FORM load_fues_data.
     IF lines( lt_fields ) >= 8.
       READ TABLE lt_fields INDEX 4 INTO lv_type.
       READ TABLE lt_fields INDEX 2 INTO lv_rule.
-      READ TABLE lt_fields INDEX 5 INTO lv_tcode.
       READ TABLE lt_fields INDEX 6 INTO lv_object.
       READ TABLE lt_fields INDEX 7 INTO lv_field.
       READ TABLE lt_fields INDEX 8 INTO lv_value.
 
       TRANSLATE: lv_type TO UPPER CASE, lv_rule TO UPPER CASE.
       CONDENSE:  lv_rule  NO-GAPS,
-                 lv_tcode NO-GAPS,
                  lv_object NO-GAPS,
                  lv_field  NO-GAPS,
                  lv_value  NO-GAPS.
@@ -661,34 +532,69 @@ FORM load_fues_data.
         ENDCASE.
       ENDIF.
 
-      IF lv_type = 'AUTH'.
-        IF lv_object IS NOT INITIAL AND lv_field IS NOT INITIAL AND lv_value IS NOT INITIAL AND lv_level IS NOT INITIAL.
-          APPEND VALUE ty_auth_fues(
-            auth_object = lv_object
-            auth_field  = lv_field
-            auth_value  = lv_value
-            fues_level  = lv_level ) TO gt_fues_auth.
-        ENDIF.
-      ELSE.
-        IF lv_tcode IS NOT INITIAL AND lv_level IS NOT INITIAL.
-          APPEND VALUE ty_tcode_fues(
-            transaction = lv_tcode
-            fues_level  = lv_level ) TO gt_fues_tcode.
-        ENDIF.
+      IF lv_object IS NOT INITIAL AND lv_field IS NOT INITIAL AND lv_value IS NOT INITIAL AND lv_level IS NOT INITIAL.
+        APPEND VALUE ty_auth_fues(
+          auth_object = lv_object
+          auth_field  = lv_field
+          auth_value  = lv_value
+          fues_level  = lv_level ) TO gt_fues_auth.
       ENDIF.
     ENDIF.
   ENDLOOP.
 
-  SORT gt_fues_tcode BY transaction.
   SORT gt_fues_auth BY auth_object auth_field auth_value.
 
-  IF gt_fues_tcode IS NOT INITIAL OR gt_fues_auth IS NOT INITIAL.
+  IF gt_fues_auth IS NOT INITIAL.
     gv_fues_enabled = abap_true.
-    MESSAGE |Se cargaron { lines( gt_fues_tcode ) } transacciones FUES.| TYPE 'I'.
     MESSAGE |Se cargaron { lines( gt_fues_auth ) } objetos FUES.| TYPE 'I'.
   ELSE.
     MESSAGE 'No se cargaron datos FUES válidos. Se continúa sin mapa FUES.' TYPE 'I'.
   ENDIF.
+ENDFORM.
+
+*=====================================================================*
+* Calcular nivel FUES por Transacción                                 *
+*=====================================================================*
+FORM calculate_transaction_fues.
+  CLEAR gt_fues_tcode.
+
+  LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>).
+    DATA(lv_level) = 'No disponible'.
+
+    READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_fues>)
+         WITH KEY auth_object = <fs_ta>-auth_object
+                  auth_field  = <fs_ta>-auth_field
+                  auth_value  = <fs_ta>-auth_value
+         BINARY SEARCH.
+    IF sy-subrc = 0.
+      lv_level = <fs_fues>-fues_level.
+    ENDIF.
+
+    <fs_ta>-fues_level = lv_level.
+
+    READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_map>)
+         WITH KEY transaction = <fs_ta>-transaction BINARY SEARCH.
+      IF sy-subrc <> 0.
+        APPEND VALUE ty_tcode_fues( transaction = <fs_ta>-transaction
+                                    fues_level  = lv_level ) TO gt_fues_tcode.
+      ELSE.
+      CASE lv_level.
+        WHEN 'AVANZADO'.
+          <fs_map>-fues_level = 'AVANZADO'.
+        WHEN 'CORE'.
+          IF <fs_map>-fues_level <> 'AVANZADO'.
+            <fs_map>-fues_level = 'CORE'.
+          ENDIF.
+        WHEN 'SELF SERV'.
+          IF <fs_map>-fues_level = 'No disponible'.
+            <fs_map>-fues_level = 'SELF SERV'.
+          ENDIF.
+      ENDCASE.
+    ENDIF.
+  ENDLOOP.
+
+  SORT gt_fues_tcode BY transaction.
+  SORT gt_transaction_auth BY transaction role_name auth_object auth_field.
 ENDFORM.
 
 *=====================================================================*
@@ -770,6 +676,9 @@ ENDFORM.
 *=====================================================================*
 FORM process_transaction_auth_view.
   PERFORM get_transaction_auth_data.  " Obtener objetos de autorización y valores por transacción
+  IF gv_fues_enabled = abap_true.
+    PERFORM calculate_transaction_fues. " Determinar nivel FUES por transacción
+  ENDIF.
   PERFORM build_trans_auth_summary.  " Generar resumen de autorizaciones y transacciones
   PERFORM display_trans_auth_alv.    " Mostrar datos en tabla ALV SALV
 ENDFORM.
@@ -1262,7 +1171,8 @@ FORM get_transaction_auth_data.
          s~ttext    AS description,
          au~object  AS auth_object,
          au~field   AS auth_field,
-         au~low     AS auth_value
+         au~low     AS auth_value,
+         'No disponible' AS fues_level
     FROM agr_tcodes AS t
     INNER JOIN agr_define AS a ON t~agr_name = a~agr_name
     LEFT JOIN tstct AS s ON t~tcode = s~tcode AND s~sprsl = @sy-langu

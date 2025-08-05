@@ -1136,10 +1136,9 @@ FORM calculate_user_basic_fues.
 
   LOOP AT lt_user_obj INTO DATA(ls_obj).
     READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_fues>)
-         WITH KEY auth_object = ls_obj-auth_object
-                  auth_field  = ls_obj-auth_field
-                  auth_value  = ls_obj-auth_value
-         BINARY SEARCH.
+         WITH TABLE KEY auth_object = ls_obj-auth_object
+                              auth_field  = ls_obj-auth_field
+                              auth_value  = ls_obj-auth_value.
     IF sy-subrc = 0.
       READ TABLE gt_user_basic ASSIGNING FIELD-SYMBOL(<fs_user>)
            WITH KEY user_id = ls_obj-user_id.

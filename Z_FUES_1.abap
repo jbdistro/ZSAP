@@ -141,6 +141,14 @@ TYPES: BEGIN OF ty_user_fues,
          core_ratio TYPE p DECIMALS 2,
        END OF ty_user_fues.
 
+*--- Estructura: Vista básica de Usuario con nivel FUES
+TYPES: BEGIN OF ty_user_basic,
+         user_id    TYPE xubname,
+         user_group TYPE usr02-class,
+         active     TYPE c LENGTH 1,
+         fues_level TYPE char15,
+       END OF ty_user_basic.
+
 *--- Estructura: Resumen genérico de conteo (usuarios, roles, etc.)
 TYPES: BEGIN OF ty_summary,
          description TYPE string,
@@ -154,6 +162,7 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       gt_user_tcode        TYPE STANDARD TABLE OF ty_user_tcode,
       gt_user_object       TYPE STANDARD TABLE OF ty_user_object,
       gt_user_profile      TYPE STANDARD TABLE OF ty_user_profile,
+      gt_user_basic        TYPE STANDARD TABLE OF ty_user_basic,
       gt_fues_tcode        TYPE STANDARD TABLE OF ty_tcode_fues,
       gt_fues_auth         TYPE STANDARD TABLE OF ty_auth_fues,
       gt_fues_role         TYPE STANDARD TABLE OF ty_role_fues,
@@ -175,6 +184,7 @@ SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01. " Selección de 
   PARAMETERS r_usr_tx  RADIOBUTTON GROUP rb1.              " Vista: Usuario–Transacción
   PARAMETERS r_usrobj  RADIOBUTTON GROUP rb1.              " Vista: Usuario–Objeto
   PARAMETERS r_uprof   RADIOBUTTON GROUP rb1.              " Vista: Usuario–Perfil
+  PARAMETERS r_ufues  RADIOBUTTON GROUP rb1.              " Vista: Usuarios (Nivel FUES)
   PARAMETERS rb_trans  RADIOBUTTON GROUP rb1.              " Vista: Transacción–Autorización
 
 SELECTION-SCREEN END OF BLOCK blk1.
@@ -218,6 +228,7 @@ START-OF-SELECTION.
     WHEN r_usr_tx.  PERFORM process_user_tcode_view.         " Vista Usuario-Transacción
     WHEN r_usrobj.  PERFORM process_user_object_view.        " Vista Usuario-Objeto
     WHEN r_uprof.   PERFORM process_user_profile_view.       " Vista Usuario-Perfil
+    WHEN r_ufues.  PERFORM process_user_fues_view.          " Vista Usuarios (Nivel FUES)
     WHEN rb_trans.  PERFORM process_transaction_auth_view.   " Vista Transacción-Autorización
   ENDCASE.
 
@@ -744,6 +755,17 @@ FORM process_user_profile_view.
 ENDFORM.
 
 *=====================================================================*
+* Vista Usuarios con nivel FUES (4.6)                                *
+*=====================================================================*
+FORM process_user_fues_view.
+  PERFORM get_user_basic_data.       " Obtener usuarios y estado
+  IF gv_fues_enabled = abap_true.
+    PERFORM calculate_user_basic_fues. " Calcular nivel FUES por usuario
+  ENDIF.
+  PERFORM display_user_basic_alv.    " Mostrar datos en tabla ALV SALV
+ENDFORM.
+
+*=====================================================================*
 * Vista Transacción ↔ Autorización (4.6)                              *
 *=====================================================================*
 FORM process_transaction_auth_view.
@@ -1119,6 +1141,81 @@ FORM get_user_profile_data.
 ENDFORM.
 
 *=====================================================================*
+* Obtener usuarios básicos y estado de actividad                      *
+*=====================================================================*
+FORM get_user_basic_data.
+  CLEAR gt_user_basic.
+
+  SELECT bname AS user_id,
+         class AS user_group,
+         gltgv
+    FROM usr02
+    WHERE bname IN @s_user
+      AND class IN @s_group
+      AND ( @p_inact = 'X' OR gltgv >= @sy-datum OR gltgv = '00000000' )
+    INTO TABLE @DATA(lt_users).
+
+  LOOP AT lt_users INTO DATA(ls_user).
+    DATA lv_active TYPE c LENGTH 1.
+    IF ls_user-gltgv >= sy-datum OR ls_user-gltgv = '00000000'.
+      lv_active = 'X'.
+    ENDIF.
+    APPEND VALUE ty_user_basic(
+             user_id    = ls_user-user_id,
+             user_group = ls_user-user_group,
+             active     = lv_active,
+             fues_level = 'No disponible' ) TO gt_user_basic.
+  ENDLOOP.
+
+  SORT gt_user_basic BY user_id.
+ENDFORM.
+
+*=====================================================================*
+* Calcular nivel FUES para cada usuario                               *
+*=====================================================================*
+FORM calculate_user_basic_fues.
+  DATA: lt_user_obj TYPE STANDARD TABLE OF ty_user_object.
+
+  SELECT r~uname    AS user_id,
+         au~object  AS auth_object,
+         au~field   AS auth_field,
+         au~low     AS auth_value
+    FROM agr_users AS r
+    INNER JOIN agr_1251 AS au ON r~agr_name = au~agr_name
+    INNER JOIN usr02   AS u  ON u~bname   = r~uname
+    WHERE r~uname  IN @s_user
+      AND u~class IN @s_group
+      AND ( @p_inact = 'X' OR u~gltgv >= @sy-datum OR u~gltgv = '00000000' )
+    INTO TABLE @lt_user_obj.
+
+  LOOP AT lt_user_obj INTO DATA(ls_obj).
+    READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_fues>)
+         WITH KEY auth_object = ls_obj-auth_object
+                  auth_field  = ls_obj-auth_field
+                  auth_value  = ls_obj-auth_value
+         BINARY SEARCH.
+    IF sy-subrc = 0.
+      READ TABLE gt_user_basic ASSIGNING FIELD-SYMBOL(<fs_user>)
+           WITH KEY user_id = ls_obj-user_id.
+      IF sy-subrc = 0.
+        CASE <fs_fues>-fues_level.
+          WHEN 'AVANZADO'.
+            <fs_user>-fues_level = 'AVANZADO'.
+          WHEN 'CORE'.
+            IF <fs_user>-fues_level <> 'AVANZADO'.
+              <fs_user>-fues_level = 'CORE'.
+            ENDIF.
+          WHEN 'SELF SERV'.
+            IF <fs_user>-fues_level = 'No disponible'.
+              <fs_user>-fues_level = 'SELF SERV'.
+            ENDIF.
+        ENDCASE.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+
+*=====================================================================*
 * Resumen general de vista Rol ↔ Transacción                          *
 *=====================================================================*
 FORM build_role_trans_summary.
@@ -1424,6 +1521,30 @@ FORM display_user_profile_alv.
       MESSAGE lx_msg_up->get_text( ) TYPE 'E'.
     CATCH cx_root INTO DATA(lx_any_up).
       MESSAGE lx_any_up->get_text( ) TYPE 'E'.
+  ENDTRY.
+ENDFORM.
+
+*=====================================================================*
+* Presentación ALV: Usuarios con nivel FUES (5.6)                     *
+*=====================================================================*
+FORM display_user_basic_alv.
+  TRY.
+      cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_user_basic ).
+      lo_alv->get_functions( )->set_all( abap_true ).
+      lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).
+      lo_alv->get_display_settings( )->set_list_header( 'Usuarios con nivel FUES' ).
+
+      DATA(lo_cols) = lo_alv->get_columns( ).
+      TRY. lo_cols->get_column( 'USER_ID'    )->set_medium_text( 'Usuario' ).      CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'USER_GROUP' )->set_medium_text( 'Grupo' ).        CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'ACTIVE'     )->set_medium_text( 'Activo' ).       CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
+
+      lo_alv->display( ).
+    CATCH cx_salv_msg INTO DATA(lx_msg_uf).
+      MESSAGE lx_msg_uf->get_text( ) TYPE 'E'.
+    CATCH cx_root INTO DATA(lx_any_uf).
+      MESSAGE lx_any_uf->get_text( ) TYPE 'E'.
   ENDTRY.
 ENDFORM.
 

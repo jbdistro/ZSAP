@@ -73,6 +73,7 @@ TYPES: BEGIN OF ty_user_tcode,
          role_name   TYPE agr_define-agr_name,
          transaction TYPE tcode,
          description TYPE tstct-ttext,
+         fues_level  TYPE char15,
        END OF ty_user_tcode.
 
 *--- Estructura: Relación Usuario ↔ Objeto de autorización
@@ -147,7 +148,7 @@ TYPES: BEGIN OF ty_user_fues,
 TYPES: BEGIN OF ty_user_basic,
          user_id    TYPE xubname,
          user_group TYPE usr02-class,
-         active     TYPE c LENGTH 1,
+         inactive   TYPE c LENGTH 1,
          fues_level TYPE char15,
        END OF ty_user_basic.
 
@@ -693,6 +694,7 @@ FORM process_user_fues_view.
   IF gv_fues_enabled = abap_true.
     PERFORM calculate_user_basic_fues. " Calcular nivel FUES por usuario
   ENDIF.
+  PERFORM build_user_basic_summary.  " Generar resumen de usuarios
   PERFORM display_user_basic_alv.    " Mostrar datos en tabla ALV SALV
 ENDFORM.
 
@@ -986,6 +988,25 @@ FORM get_user_tcode_data.
 
   SORT gt_user_tcode BY user_id user_group transaction role_name.
   DELETE ADJACENT DUPLICATES FROM gt_user_tcode COMPARING user_id user_group transaction role_name.
+
+  LOOP AT gt_user_tcode ASSIGNING FIELD-SYMBOL(<ls_ut>).
+    <ls_ut>-fues_level = 'No disponible'.
+  ENDLOOP.
+
+  IF gv_fues_enabled = abap_true.
+    IF gt_fues_tcode IS INITIAL.
+      IF gt_transaction_auth IS INITIAL.
+        PERFORM get_transaction_auth_data.
+      ENDIF.
+      PERFORM calculate_transaction_fues.
+    ENDIF.
+    LOOP AT gt_user_tcode ASSIGNING FIELD-SYMBOL(<ls_ut>).
+      READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_map>) WITH KEY transaction = <ls_ut>-transaction.
+      IF sy-subrc = 0.
+        <ls_ut>-fues_level = <fs_map>-fues_level.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
 ENDFORM.
 
 *=====================================================================*
@@ -1099,7 +1120,7 @@ FORM get_user_basic_data.
 
   DATA: lt_users      TYPE STANDARD TABLE OF ty_user,
         ls_user       TYPE ty_user,
-        lv_active     TYPE c LENGTH 1,
+        lv_inactive   TYPE c LENGTH 1,
         ls_user_basic TYPE ty_user_basic.
 
   CLEAR gt_user_basic.
@@ -1114,14 +1135,14 @@ FORM get_user_basic_data.
     INTO TABLE @lt_users.
 
   LOOP AT lt_users INTO ls_user.
-    CLEAR: lv_active, ls_user_basic.
-    IF ls_user-gltgv >= sy-datum OR ls_user-gltgv = '00000000'.
-      lv_active = 'X'.
+    CLEAR: lv_inactive, ls_user_basic.
+    IF ls_user-gltgv <> '00000000' AND ls_user-gltgv < sy-datum.
+      lv_inactive = 'X'.
     ENDIF.
 
     ls_user_basic-user_id    = ls_user-user_id.
     ls_user_basic-user_group = ls_user-user_group.
-    ls_user_basic-active     = lv_active.
+    ls_user_basic-inactive   = lv_inactive.
     ls_user_basic-fues_level = 'No disponible'.
 
     APPEND ls_user_basic TO gt_user_basic.
@@ -1172,6 +1193,47 @@ FORM calculate_user_basic_fues.
       ENDIF.
     ENDIF.
   ENDLOOP.
+ENDFORM.
+
+*=====================================================================*
+* Resumen de Usuarios con nivel FUES                                 *
+*=====================================================================*
+FORM build_user_basic_summary.
+  DATA: lv_adv      TYPE i,
+        lv_core     TYPE i,
+        lv_self     TYPE i,
+        lv_active   TYPE i,
+        lv_inactive TYPE i,
+        lv_score    TYPE decfloat16.
+
+  LOOP AT gt_user_basic INTO DATA(ls_ub).
+    CASE ls_ub-fues_level.
+      WHEN 'AVANZADO'.
+        lv_adv += 1.
+      WHEN 'CORE'.
+        lv_core += 1.
+      WHEN 'SELF SERV'.
+        lv_self += 1.
+    ENDCASE.
+
+    IF ls_ub-inactive = 'X'.
+      lv_inactive += 1.
+    ELSE.
+      lv_active += 1.
+    ENDIF.
+  ENDLOOP.
+
+  lv_score = lv_adv.
+  lv_score += lv_core * '0.2'.
+  lv_score += lv_self / '30'.
+
+  CLEAR gt_summary.
+  APPEND VALUE #( description = 'Usuarios AVANZADO'  value = |{ lv_adv }| )       TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios CORE'      value = |{ lv_core }| )      TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios SELF SERV' value = |{ lv_self }| )      TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios activos'   value = |{ lv_active }| )    TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios inactivos' value = |{ lv_inactive }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Puntaje FUES'       value = |{ lv_score DECIMALS = 2 }| )    TO gt_summary.
 ENDFORM.
 
 *=====================================================================*
@@ -1422,6 +1484,7 @@ FORM display_user_tcode_alv.
       TRY. lo_cols->get_column( 'ROLE_NAME'  )->set_medium_text( 'Rol' ).          CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'TRANSACTION')->set_medium_text( 'Transacción' ).  CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'DESCRIPTION')->set_medium_text( 'Descripción' ).  CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).    CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ut).
@@ -1512,6 +1575,16 @@ ENDFORM.
 FORM display_user_basic_alv.
   TRY.
       cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_user_basic ).
+      DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
+
+      DATA(lv_row) = 1.
+      LOOP AT gt_summary INTO DATA(ls_sum).
+        lo_grid->create_label( row = lv_row column = 1 text = ls_sum-description ).
+        lo_grid->create_text(  row = lv_row column = 2 text = ls_sum-value ).
+        lv_row = lv_row + 1.
+      ENDLOOP.
+      lo_alv->set_end_of_list( lo_grid ).
+
       lo_alv->get_functions( )->set_all( abap_true ).
       lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).
       lo_alv->get_display_settings( )->set_list_header( 'Usuarios con nivel FUES' ).
@@ -1519,7 +1592,7 @@ FORM display_user_basic_alv.
       DATA(lo_cols) = lo_alv->get_columns( ).
       TRY. lo_cols->get_column( 'USER_ID'    )->set_medium_text( 'Usuario' ).      CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USER_GROUP' )->set_medium_text( 'Grupo' ).        CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'ACTIVE'     )->set_medium_text( 'Activo' ).       CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'INACTIVE'   )->set_medium_text( 'Inactivo' ).     CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
@@ -1557,7 +1630,7 @@ FORM display_trans_auth_alv.
       TRY. lo_cols->get_column( 'AUTH_OBJECT')->set_medium_text( 'Objeto' ).      CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).       CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'FUES' ).        CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel' ).       CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ta).

@@ -194,6 +194,7 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       gv_fues_enabled      TYPE abap_bool VALUE abap_false.
 
 FIELD-SYMBOLS <fs_rt> LIKE LINE OF gt_role_transaction.
+FIELD-SYMBOLS <fs_ta> LIKE LINE OF gt_transaction_auth.
 
 
 *========================================================================*
@@ -289,7 +290,7 @@ FORM calculate_role_fues.
   LOOP AT gt_role_transaction INTO DATA(ls_rt).
     DATA(lv_level) = 'No disponible'.
 
-    LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>)
+    LOOP AT gt_transaction_auth ASSIGNING <fs_ta>
          WHERE role_name = ls_rt-role_name
            AND transaction = ls_rt-transaction.
       CASE <fs_ta>-fues_level.
@@ -537,9 +538,15 @@ ENDFORM.
 * Calcular nivel FUES por Transacción                                 *
 *=====================================================================*
 FORM calculate_transaction_fues.
-  CLEAR gt_fues_tcode.
+  IF gv_fues_enabled = abap_false OR gt_transaction_auth IS INITIAL.
+    SORT gt_transaction_auth BY transaction role_name auth_object auth_field.
+    RETURN.
+  ENDIF.
 
-  LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>).
+  CLEAR gt_fues_tcode.
+  DATA: lt_tx_top TYPE HASHED TABLE OF ty_tcode_fues WITH UNIQUE KEY transaction.
+
+  LOOP AT gt_transaction_auth ASSIGNING <fs_ta>.
     DATA(lv_level) = 'No disponible'.
 
     READ TABLE gt_fues_auth ASSIGNING FIELD-SYMBOL(<fs_fues>)
@@ -552,34 +559,34 @@ FORM calculate_transaction_fues.
 
     <fs_ta>-fues_level = lv_level.
 
-    READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_map>)
-         WITH TABLE KEY transaction = <fs_ta>-transaction.
+    READ TABLE lt_tx_top ASSIGNING FIELD-SYMBOL(<fs_map>) WITH KEY transaction = <fs_ta>-transaction.
     IF sy-subrc <> 0.
       INSERT VALUE ty_tcode_fues( transaction = <fs_ta>-transaction
-                                  fues_level  = lv_level ) INTO TABLE gt_fues_tcode.
-    ELSE.
-      CASE lv_level.
-        WHEN 'AVANZADO'.
-          <fs_map>-fues_level = 'AVANZADO'.
-        WHEN 'CORE'.
-          IF <fs_map>-fues_level <> 'AVANZADO'.
-            <fs_map>-fues_level = 'CORE'.
-          ENDIF.
-        WHEN 'SELF SERV'.
-          IF <fs_map>-fues_level = 'No disponible'.
-            <fs_map>-fues_level = 'SELF SERV'.
-          ENDIF.
-      ENDCASE.
+                                  fues_level  = lv_level ) INTO TABLE lt_tx_top ASSIGNING <fs_map>.
     ENDIF.
+
+    CASE lv_level.
+      WHEN 'AVANZADO'.
+        <fs_map>-fues_level = 'AVANZADO'.
+      WHEN 'CORE'.
+        IF <fs_map>-fues_level <> 'AVANZADO'.
+          <fs_map>-fues_level = 'CORE'.
+        ENDIF.
+      WHEN 'SELF SERV'.
+        IF <fs_map>-fues_level = 'No disponible'.
+          <fs_map>-fues_level = 'SELF SERV'.
+        ENDIF.
+    ENDCASE.
   ENDLOOP.
 
   LOOP AT gt_transaction_auth ASSIGNING <fs_ta>.
-    READ TABLE gt_fues_tcode ASSIGNING <fs_map> WITH KEY transaction = <fs_ta>-transaction.
+    READ TABLE lt_tx_top ASSIGNING <fs_map> WITH KEY transaction = <fs_ta>-transaction.
     IF sy-subrc = 0.
       <fs_ta>-tx_top_level = <fs_map>-fues_level.
     ENDIF.
   ENDLOOP.
 
+  gt_fues_tcode = lt_tx_top.
   SORT gt_transaction_auth BY transaction role_name auth_object auth_field.
 ENDFORM.
 
@@ -713,7 +720,8 @@ FORM get_user_role_data.
          u~class     AS user_group,
          r~from_dat  AS from_date,
          r~to_dat    AS to_date,
-         CASE WHEN r~from_dat > @lv_current_date OR r~to_dat < @lv_current_date
+         CASE WHEN ( r~from_dat <> '00000000' AND r~from_dat > @lv_current_date )
+                   OR ( r~to_dat   <> '00000000' AND r~to_dat   < @lv_current_date )
               THEN 'X' ELSE ' ' END AS role_inactive,
          CASE WHEN u~gltgv <> '00000000' AND u~gltgv < @lv_current_date
               THEN 'X' ELSE ' ' END AS user_inactive
@@ -1418,49 +1426,49 @@ ENDFORM.
 * Obtener relación Transacción ↔ Objeto de autorización                *
 *=====================================================================*
 FORM get_transaction_auth_data.
-  " Si el mapa FUES está cargado, limitar la búsqueda a esas autorizaciones
+  DATA: lt_obj_range TYPE RANGE OF agr_1251-object.
+
   IF gv_fues_enabled = abap_true AND gt_fues_auth IS NOT INITIAL.
-    SELECT t~tcode    AS transaction,
-           a~agr_name AS role_name,
-           s~ttext    AS description,
-           au~object  AS auth_object,
-           au~field   AS auth_field,
-           au~low     AS auth_value,
-           'No disponible' AS fues_level,
-           'No disponible' AS tx_top_level
-      FROM agr_tcodes AS t
-      INNER JOIN agr_define AS a ON t~agr_name = a~agr_name
-      LEFT JOIN tstct AS s ON t~tcode = s~tcode AND s~sprsl = @sy-langu
-      INNER JOIN agr_1251 AS au ON a~agr_name = au~agr_name
-      INNER JOIN @gt_fues_auth AS f ON au~object = f~auth_object
-                                   AND au~field  = f~auth_field
-                                   AND au~low    = f~auth_value
-      WHERE t~tcode    IN @s_tcode
-        AND a~agr_name IN @s_role
-      INTO TABLE @gt_transaction_auth.
-  ELSE.
-    SELECT t~tcode    AS transaction,
-           a~agr_name AS role_name,
-           s~ttext    AS description,
-           au~object  AS auth_object,
-           au~field   AS auth_field,
-           au~low     AS auth_value,
-           'No disponible' AS fues_level,
-           'No disponible' AS tx_top_level
-      FROM agr_tcodes AS t
-      INNER JOIN agr_define AS a ON t~agr_name = a~agr_name
-      LEFT JOIN tstct AS s ON t~tcode = s~tcode AND s~sprsl = @sy-langu
-      LEFT JOIN agr_1251 AS au ON a~agr_name = au~agr_name
-      WHERE t~tcode    IN @s_tcode
-        AND a~agr_name IN @s_role
-        AND au~object  IN @s_object
-      INTO TABLE @gt_transaction_auth.
+    LOOP AT gt_fues_auth INTO DATA(ls_fues).
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_fues-auth_object ) TO lt_obj_range.
+    ENDLOOP.
   ENDIF.
+
+  SELECT t~tcode    AS transaction,
+         a~agr_name AS role_name,
+         s~ttext    AS description,
+         au~object  AS auth_object,
+         au~field   AS auth_field,
+         au~low     AS auth_value,
+         'No disponible' AS fues_level,
+         'No disponible' AS tx_top_level
+    FROM agr_tcodes AS t
+    INNER JOIN agr_define AS a ON t~agr_name = a~agr_name
+    LEFT JOIN tstct AS s ON t~tcode = s~tcode AND s~sprsl = @sy-langu
+    LEFT JOIN agr_1251 AS au ON a~agr_name = au~agr_name
+    WHERE t~tcode    IN @s_tcode
+      AND a~agr_name IN @s_role
+      AND au~object  IN @s_object
+      AND ( @gv_fues_enabled = @abap_false OR au~object IN @lt_obj_range )
+    INTO TABLE @gt_transaction_auth.
 
   " Validación de existencia de datos
   IF sy-subrc <> 0.
     MESSAGE 'No se hallaron autorizaciones para las transacciones seleccionadas.' TYPE 'I' DISPLAY LIKE 'E'.
     LEAVE LIST-PROCESSING.
+  ENDIF.
+
+  IF gv_fues_enabled = abap_true AND gt_fues_auth IS NOT INITIAL.
+    DATA lv_idx TYPE sy-tabix.
+    LOOP AT gt_transaction_auth ASSIGNING <fs_ta> INDEX lv_idx.
+      READ TABLE gt_fues_auth TRANSPORTING NO FIELDS
+           WITH TABLE KEY auth_object = <fs_ta>-auth_object
+                           auth_field  = <fs_ta>-auth_field
+                           auth_value  = <fs_ta>-auth_value.
+      IF sy-subrc <> 0.
+        DELETE gt_transaction_auth INDEX lv_idx.
+      ENDIF.
+    ENDLOOP.
   ENDIF.
 
   SORT gt_transaction_auth BY transaction role_name auth_object auth_field.
@@ -1891,8 +1899,7 @@ FORM build_role_basic_summary.
         lv_core    TYPE i,
         lv_self    TYPE i,
         lv_active  TYPE i,
-        lv_inact   TYPE i,
-        lv_score   TYPE decfloat16.
+        lv_inact   TYPE i.
 
   LOOP AT gt_role_basic INTO DATA(ls_rb).
     IF ls_rb-active = 'X'.
@@ -1907,17 +1914,12 @@ FORM build_role_basic_summary.
     ENDIF.
   ENDLOOP.
 
-  lv_score = lv_adv.
-  lv_score += lv_core * '0.2'.
-  lv_score += lv_self / '30'.
-
   CLEAR gt_summary.
   APPEND VALUE #( description = 'Roles AVANZADO'  value = |{ lv_adv }| )  TO gt_summary.
   APPEND VALUE #( description = 'Roles CORE'      value = |{ lv_core }| ) TO gt_summary.
   APPEND VALUE #( description = 'Roles SELF SERV' value = |{ lv_self }| ) TO gt_summary.
   APPEND VALUE #( description = 'Roles activos'   value = |{ lv_active }| ) TO gt_summary.
   APPEND VALUE #( description = 'Roles inactivos' value = |{ lv_inact }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Puntaje FUES'    value = |{ lv_score DECIMALS = 2 }| ) TO gt_summary.
 ENDFORM.
 
 *=====================================================================*

@@ -246,29 +246,9 @@ FORM process_user_role_view.
   PERFORM add_users_without_roles.   " Añadir usuarios sin asignaciones a ningún rol
   PERFORM calculate_counts.          " Calcular cantidad de roles por usuario y usuarios por rol
 
-  IF gv_fues_enabled = abap_true.
-    PERFORM get_role_transaction_data. " Obtener transacciones por rol para cálculo FUES
-    CLEAR gt_fues_role.
-    LOOP AT gt_role_transaction INTO DATA(ls_rt_init).
-      READ TABLE gt_fues_role WITH KEY role_name = ls_rt_init-role_name TRANSPORTING NO FIELDS.
-      IF sy-subrc <> 0.
-        APPEND VALUE ty_role_fues( role_name = ls_rt_init-role_name
-                                   fues_level = 'No disponible' ) TO gt_fues_role.
-      ENDIF.
-    ENDLOOP.
-
-    CLEAR gt_fues_user.
-    LOOP AT gt_user_role INTO DATA(ls_ur_init).
-      READ TABLE gt_fues_user WITH KEY user_id = ls_ur_init-user_id TRANSPORTING NO FIELDS.
-      IF sy-subrc <> 0.
-        APPEND VALUE ty_user_fues( user_id = ls_ur_init-user_id
-                                   fues_level = 'No disponible' ) TO gt_fues_user.
-      ENDIF.
-    ENDLOOP.
-
-    PERFORM calculate_role_fues.     " Determinar nivel FUES por rol
-    PERFORM calculate_user_fues.     " Determinar nivel FUES por usuario
-  ENDIF.
+  " Requisito 1: se omite completamente el análisis de niveles FUES en
+  " la vista Rol–Usuario, aun si el archivo estuviera cargado.
+  " El bloque original de cálculo FUES se ha removido deliberadamente.
   PERFORM apply_user_role_filters.   " Filtrar resultados según flags de exclusión
   PERFORM build_user_role_summary.   " Construir resumen cuantitativo de la vista
   PERFORM display_user_role_alv.     " Mostrar datos en tabla ALV SALV
@@ -1441,7 +1421,11 @@ FORM display_user_role_alv.
       TRY. lo_cols->get_column( 'ROLES_PER_USER' )->set_medium_text( 'Roles x Usuario' ).   CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USERS_PER_ROLE' )->set_medium_text( 'Usuarios x Rol' ).    CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USER_INACTIVE'  )->set_medium_text( 'Usuario inactivo' ).  CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL'    )->set_medium_text( 'Nivel FUES' ).       CATCH cx_salv_not_found. ENDTRY.
+      " Requisito 1: ocultar columna de nivel FUES en esta vista
+      TRY.
+        lo_cols->get_column( 'FUES_LEVEL' )->set_visible( abap_false ).
+      CATCH cx_salv_not_found.
+      ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ur).

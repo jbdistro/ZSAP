@@ -224,7 +224,9 @@ SELECTION-SCREEN END OF BLOCK blk3.
 * Lógica principal: Dispatcher de vistas según opción seleccionada (3) *
 *======================================================================*
 START-OF-SELECTION.
-  PERFORM load_fues_data.
+  IF rb_user <> abap_true AND r_uprof <> abap_true.
+    PERFORM load_fues_data.
+  ENDIF.
   CASE 'X'.
     WHEN rb_user.   PERFORM process_user_role_view.          " Vista Rol-Usuario
     WHEN rb_role.   PERFORM process_role_transaction_view.   " Vista Rol-Transacción
@@ -243,26 +245,27 @@ FORM process_user_role_view.
   PERFORM add_roles_without_users.   " Añadir roles definidos que no tengan usuarios asignados
   PERFORM add_users_without_roles.   " Añadir usuarios sin asignaciones a ningún rol
   PERFORM calculate_counts.          " Calcular cantidad de roles por usuario y usuarios por rol
-  PERFORM get_role_transaction_data. " Obtener transacciones por rol para cálculo FUES
-  CLEAR gt_fues_role.
-  LOOP AT gt_role_transaction INTO DATA(ls_rt_init).
-    READ TABLE gt_fues_role WITH KEY role_name = ls_rt_init-role_name TRANSPORTING NO FIELDS.
-    IF sy-subrc <> 0.
-      APPEND VALUE ty_role_fues( role_name = ls_rt_init-role_name
-                                 fues_level = 'No disponible' ) TO gt_fues_role.
-    ENDIF.
-  ENDLOOP.
-
-  CLEAR gt_fues_user.
-  LOOP AT gt_user_role INTO DATA(ls_ur_init).
-    READ TABLE gt_fues_user WITH KEY user_id = ls_ur_init-user_id TRANSPORTING NO FIELDS.
-    IF sy-subrc <> 0.
-      APPEND VALUE ty_user_fues( user_id = ls_ur_init-user_id
-                                 fues_level = 'No disponible' ) TO gt_fues_user.
-    ENDIF.
-  ENDLOOP.
 
   IF gv_fues_enabled = abap_true.
+    PERFORM get_role_transaction_data. " Obtener transacciones por rol para cálculo FUES
+    CLEAR gt_fues_role.
+    LOOP AT gt_role_transaction INTO DATA(ls_rt_init).
+      READ TABLE gt_fues_role WITH KEY role_name = ls_rt_init-role_name TRANSPORTING NO FIELDS.
+      IF sy-subrc <> 0.
+        APPEND VALUE ty_role_fues( role_name = ls_rt_init-role_name
+                                   fues_level = 'No disponible' ) TO gt_fues_role.
+      ENDIF.
+    ENDLOOP.
+
+    CLEAR gt_fues_user.
+    LOOP AT gt_user_role INTO DATA(ls_ur_init).
+      READ TABLE gt_fues_user WITH KEY user_id = ls_ur_init-user_id TRANSPORTING NO FIELDS.
+      IF sy-subrc <> 0.
+        APPEND VALUE ty_user_fues( user_id = ls_ur_init-user_id
+                                   fues_level = 'No disponible' ) TO gt_fues_user.
+      ENDIF.
+    ENDLOOP.
+
     PERFORM calculate_role_fues.     " Determinar nivel FUES por rol
     PERFORM calculate_user_fues.     " Determinar nivel FUES por usuario
   ENDIF.
@@ -1016,23 +1019,44 @@ ENDFORM.
 * Resumen de relación Usuario ↔ Transacción                           *
 *=====================================================================*
 FORM build_user_tcode_summary.
-  DATA: lv_users TYPE i,
-        lv_tx    TYPE i,
-        lt_users TYPE STANDARD TABLE OF xubname,
-        lt_tx    TYPE STANDARD TABLE OF tcode.
+  DATA: lv_users     TYPE i,
+        lv_tx        TYPE i,
+        lt_users     TYPE STANDARD TABLE OF xubname,
+        lt_tx        TYPE STANDARD TABLE OF tcode,
+        lv_max_level TYPE char15 VALUE 'No disponible',
+        lt_tx_max    TYPE STANDARD TABLE OF tcode,
+        lv_tx_max    TYPE i.
 
   LOOP AT gt_user_tcode INTO DATA(ls1).
     APPEND ls1-user_id     TO lt_users.
     APPEND ls1-transaction TO lt_tx.
+    CASE ls1-fues_level.
+      WHEN 'AVANZADO'.
+        lv_max_level = 'AVANZADO'.
+      WHEN 'CORE'.
+        IF lv_max_level <> 'AVANZADO'.
+          lv_max_level = 'CORE'.
+        ENDIF.
+      WHEN 'SELF SERV'.
+        IF lv_max_level = 'No disponible'.
+          lv_max_level = 'SELF SERV'.
+        ENDIF.
+    ENDCASE.
+  ENDLOOP.
+
+  LOOP AT gt_user_tcode INTO ls1 WHERE fues_level = lv_max_level.
+    APPEND ls1-transaction TO lt_tx_max.
   ENDLOOP.
 
   SORT lt_users. DELETE ADJACENT DUPLICATES FROM lt_users. lv_users = lines( lt_users ).
   SORT lt_tx.    DELETE ADJACENT DUPLICATES FROM lt_tx.    lv_tx    = lines( lt_tx ).
+  SORT lt_tx_max. DELETE ADJACENT DUPLICATES FROM lt_tx_max. lv_tx_max = lines( lt_tx_max ).
 
   CLEAR gt_summary.
-  APPEND VALUE #( description = 'Usuarios únicos'      value = |{ lv_users }| )               TO gt_summary.
-  APPEND VALUE #( description = 'Transacciones únicas' value = |{ lv_tx }| )                  TO gt_summary.
-  APPEND VALUE #( description = 'Asignaciones (filas)' value = |{ lines( gt_user_tcode ) }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios únicos'      value = |{ lv_users }| )                               TO gt_summary.
+  APPEND VALUE #( description = 'Transacciones únicas' value = |{ lv_tx }| )                                  TO gt_summary.
+  APPEND VALUE #( description = 'Transacciones únicas en nivel máximo / Total' value = |{ lv_tx_max }/{ lv_tx }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Asignaciones (filas)' value = |{ lines( gt_user_tcode ) }| )                 TO gt_summary.
 ENDFORM.
 
 *=====================================================================*
@@ -1524,7 +1548,7 @@ FORM display_user_object_alv.
       TRY. lo_cols->get_column( 'AUTH_OBJECT')->set_medium_text( 'Objeto' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ).        CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).        CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'FUES' ).         CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_uo).
@@ -1633,7 +1657,7 @@ FORM display_trans_auth_alv.
       TRY. lo_cols->get_column( 'AUTH_OBJECT')->set_medium_text( 'Objeto' ).      CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).       CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel' ).       CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ta).

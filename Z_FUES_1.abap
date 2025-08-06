@@ -115,6 +115,7 @@ TYPES: BEGIN OF ty_user_profile,
          auth_value  TYPE agr_1251-low,
          fues_level  TYPE char15,
          tx_top_level TYPE char15,
+         obj_top_level TYPE char15,
        END OF ty_transaction_auth.
 
 *--- Estructura: Mapeo Transacción ↔ Nivel FUES
@@ -547,7 +548,8 @@ FORM calculate_transaction_fues.
   ENDIF.
 
   CLEAR gt_fues_tcode.
-  DATA: lt_tx_top TYPE HASHED TABLE OF ty_tcode_fues WITH UNIQUE KEY transaction.
+  DATA: lt_tx_top  TYPE HASHED TABLE OF ty_tcode_fues WITH UNIQUE KEY transaction,
+        lt_obj_top TYPE HASHED TABLE OF ty_auth_fues WITH UNIQUE KEY auth_object.
 
   LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>).
     DATA(lv_level) = 'No disponible'.
@@ -568,16 +570,29 @@ FORM calculate_transaction_fues.
                                   fues_level  = lv_level ) INTO TABLE lt_tx_top ASSIGNING <fs_map>.
     ENDIF.
 
+    READ TABLE lt_obj_top ASSIGNING FIELD-SYMBOL(<fs_obj>) WITH KEY auth_object = <fs_ta>-auth_object.
+    IF sy-subrc <> 0.
+      INSERT VALUE ty_auth_fues( auth_object = <fs_ta>-auth_object
+                                 fues_level  = lv_level ) INTO TABLE lt_obj_top ASSIGNING <fs_obj>.
+    ENDIF.
+
     CASE lv_level.
       WHEN 'AVANZADO'.
         <fs_map>-fues_level = 'AVANZADO'.
+        <fs_obj>-fues_level = 'AVANZADO'.
       WHEN 'CORE'.
         IF <fs_map>-fues_level <> 'AVANZADO'.
           <fs_map>-fues_level = 'CORE'.
         ENDIF.
+        IF <fs_obj>-fues_level <> 'AVANZADO'.
+          <fs_obj>-fues_level = 'CORE'.
+        ENDIF.
       WHEN 'SELF SERV'.
         IF <fs_map>-fues_level = 'No disponible'.
           <fs_map>-fues_level = 'SELF SERV'.
+        ENDIF.
+        IF <fs_obj>-fues_level = 'No disponible'.
+          <fs_obj>-fues_level = 'SELF SERV'.
         ENDIF.
     ENDCASE.
   ENDLOOP.
@@ -586,6 +601,10 @@ FORM calculate_transaction_fues.
     READ TABLE lt_tx_top ASSIGNING <fs_map> WITH KEY transaction = <fs_ta>-transaction.
     IF sy-subrc = 0.
       <fs_ta>-tx_top_level = <fs_map>-fues_level.
+    ENDIF.
+    READ TABLE lt_obj_top ASSIGNING <fs_obj> WITH KEY auth_object = <fs_ta>-auth_object.
+    IF sy-subrc = 0.
+      <fs_ta>-obj_top_level = <fs_obj>-fues_level.
     ENDIF.
   ENDLOOP.
 
@@ -1999,6 +2018,7 @@ FORM display_trans_auth_alv.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).  CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'TX_TOP_LEVEL' )->set_medium_text( 'Nivel Máx Trans' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'OBJ_TOP_LEVEL' )->set_medium_text( 'Nivel Máx Objeto' ). CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ta).

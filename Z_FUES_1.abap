@@ -537,6 +537,11 @@ ENDFORM.
 * Calcular nivel FUES por Transacción                                 *
 *=====================================================================*
 FORM calculate_transaction_fues.
+  IF gv_fues_enabled = abap_false OR gt_transaction_auth IS INITIAL.
+    SORT gt_transaction_auth BY transaction role_name auth_object auth_field.
+    RETURN.
+  ENDIF.
+
   CLEAR gt_fues_tcode.
   DATA: lt_tx_top TYPE HASHED TABLE OF ty_tcode_fues WITH UNIQUE KEY transaction.
 
@@ -1420,49 +1425,48 @@ ENDFORM.
 * Obtener relación Transacción ↔ Objeto de autorización                *
 *=====================================================================*
 FORM get_transaction_auth_data.
-  " Si el mapa FUES está cargado, limitar la búsqueda a esas autorizaciones
+  DATA: lt_obj_range TYPE RANGE OF agr_1251-object.
+
   IF gv_fues_enabled = abap_true AND gt_fues_auth IS NOT INITIAL.
-    SELECT t~tcode    AS transaction,
-           a~agr_name AS role_name,
-           s~ttext    AS description,
-           au~object  AS auth_object,
-           au~field   AS auth_field,
-           au~low     AS auth_value,
-           'No disponible' AS fues_level,
-           'No disponible' AS tx_top_level
-      FROM agr_tcodes AS t
-      INNER JOIN agr_define AS a ON t~agr_name = a~agr_name
-      LEFT JOIN tstct AS s ON t~tcode = s~tcode AND s~sprsl = @sy-langu
-      INNER JOIN agr_1251 AS au ON a~agr_name = au~agr_name
-      INNER JOIN @gt_fues_auth AS f ON au~object = f~auth_object
-                                   AND au~field  = f~auth_field
-                                   AND au~low    = f~auth_value
-      WHERE t~tcode    IN @s_tcode
-        AND a~agr_name IN @s_role
-      INTO TABLE @gt_transaction_auth.
-  ELSE.
-    SELECT t~tcode    AS transaction,
-           a~agr_name AS role_name,
-           s~ttext    AS description,
-           au~object  AS auth_object,
-           au~field   AS auth_field,
-           au~low     AS auth_value,
-           'No disponible' AS fues_level,
-           'No disponible' AS tx_top_level
-      FROM agr_tcodes AS t
-      INNER JOIN agr_define AS a ON t~agr_name = a~agr_name
-      LEFT JOIN tstct AS s ON t~tcode = s~tcode AND s~sprsl = @sy-langu
-      LEFT JOIN agr_1251 AS au ON a~agr_name = au~agr_name
-      WHERE t~tcode    IN @s_tcode
-        AND a~agr_name IN @s_role
-        AND au~object  IN @s_object
-      INTO TABLE @gt_transaction_auth.
+    LOOP AT gt_fues_auth INTO DATA(ls_fues).
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_fues-auth_object ) TO lt_obj_range.
+    ENDLOOP.
   ENDIF.
+
+  SELECT t~tcode    AS transaction,
+         a~agr_name AS role_name,
+         s~ttext    AS description,
+         au~object  AS auth_object,
+         au~field   AS auth_field,
+         au~low     AS auth_value,
+         'No disponible' AS fues_level,
+         'No disponible' AS tx_top_level
+    FROM agr_tcodes AS t
+    INNER JOIN agr_define AS a ON t~agr_name = a~agr_name
+    LEFT JOIN tstct AS s ON t~tcode = s~tcode AND s~sprsl = @sy-langu
+    LEFT JOIN agr_1251 AS au ON a~agr_name = au~agr_name
+    WHERE t~tcode    IN @s_tcode
+      AND a~agr_name IN @s_role
+      AND au~object  IN @s_object
+      AND ( @gv_fues_enabled = @abap_false OR au~object IN @lt_obj_range )
+    INTO TABLE @gt_transaction_auth.
 
   " Validación de existencia de datos
   IF sy-subrc <> 0.
     MESSAGE 'No se hallaron autorizaciones para las transacciones seleccionadas.' TYPE 'I' DISPLAY LIKE 'E'.
     LEAVE LIST-PROCESSING.
+  ENDIF.
+
+  IF gv_fues_enabled = abap_true AND gt_fues_auth IS NOT INITIAL.
+    LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>) INDEX DATA(lv_idx).
+      READ TABLE gt_fues_auth TRANSPORTING NO FIELDS
+           WITH TABLE KEY auth_object = <fs_ta>-auth_object
+                           auth_field  = <fs_ta>-auth_field
+                           auth_value  = <fs_ta>-auth_value.
+      IF sy-subrc <> 0.
+        DELETE gt_transaction_auth INDEX lv_idx.
+      ENDIF.
+    ENDLOOP.
   ENDIF.
 
   SORT gt_transaction_auth BY transaction role_name auth_object auth_field.

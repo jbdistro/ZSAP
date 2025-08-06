@@ -538,6 +538,7 @@ ENDFORM.
 *=====================================================================*
 FORM calculate_transaction_fues.
   CLEAR gt_fues_tcode.
+  DATA: lt_tx_top TYPE HASHED TABLE OF ty_tcode_fues WITH UNIQUE KEY transaction.
 
   LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>).
     DATA(lv_level) = 'No disponible'.
@@ -552,34 +553,34 @@ FORM calculate_transaction_fues.
 
     <fs_ta>-fues_level = lv_level.
 
-    READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_map>)
-         WITH TABLE KEY transaction = <fs_ta>-transaction.
+    READ TABLE lt_tx_top ASSIGNING FIELD-SYMBOL(<fs_map>) WITH KEY transaction = <fs_ta>-transaction.
     IF sy-subrc <> 0.
       INSERT VALUE ty_tcode_fues( transaction = <fs_ta>-transaction
-                                  fues_level  = lv_level ) INTO TABLE gt_fues_tcode.
-    ELSE.
-      CASE lv_level.
-        WHEN 'AVANZADO'.
-          <fs_map>-fues_level = 'AVANZADO'.
-        WHEN 'CORE'.
-          IF <fs_map>-fues_level <> 'AVANZADO'.
-            <fs_map>-fues_level = 'CORE'.
-          ENDIF.
-        WHEN 'SELF SERV'.
-          IF <fs_map>-fues_level = 'No disponible'.
-            <fs_map>-fues_level = 'SELF SERV'.
-          ENDIF.
-      ENDCASE.
+                                  fues_level  = lv_level ) INTO TABLE lt_tx_top ASSIGNING <fs_map>.
     ENDIF.
+
+    CASE lv_level.
+      WHEN 'AVANZADO'.
+        <fs_map>-fues_level = 'AVANZADO'.
+      WHEN 'CORE'.
+        IF <fs_map>-fues_level <> 'AVANZADO'.
+          <fs_map>-fues_level = 'CORE'.
+        ENDIF.
+      WHEN 'SELF SERV'.
+        IF <fs_map>-fues_level = 'No disponible'.
+          <fs_map>-fues_level = 'SELF SERV'.
+        ENDIF.
+    ENDCASE.
   ENDLOOP.
 
   LOOP AT gt_transaction_auth ASSIGNING <fs_ta>.
-    READ TABLE gt_fues_tcode ASSIGNING <fs_map> WITH KEY transaction = <fs_ta>-transaction.
+    READ TABLE lt_tx_top ASSIGNING <fs_map> WITH KEY transaction = <fs_ta>-transaction.
     IF sy-subrc = 0.
       <fs_ta>-tx_top_level = <fs_map>-fues_level.
     ENDIF.
   ENDLOOP.
 
+  gt_fues_tcode = lt_tx_top.
   SORT gt_transaction_auth BY transaction role_name auth_object auth_field.
 ENDFORM.
 
@@ -713,7 +714,8 @@ FORM get_user_role_data.
          u~class     AS user_group,
          r~from_dat  AS from_date,
          r~to_dat    AS to_date,
-         CASE WHEN r~from_dat > @lv_current_date OR r~to_dat < @lv_current_date
+         CASE WHEN ( r~from_dat <> '00000000' AND r~from_dat > @lv_current_date )
+                   OR ( r~to_dat   <> '00000000' AND r~to_dat   < @lv_current_date )
               THEN 'X' ELSE ' ' END AS role_inactive,
          CASE WHEN u~gltgv <> '00000000' AND u~gltgv < @lv_current_date
               THEN 'X' ELSE ' ' END AS user_inactive
@@ -1891,8 +1893,7 @@ FORM build_role_basic_summary.
         lv_core    TYPE i,
         lv_self    TYPE i,
         lv_active  TYPE i,
-        lv_inact   TYPE i,
-        lv_score   TYPE decfloat16.
+        lv_inact   TYPE i.
 
   LOOP AT gt_role_basic INTO DATA(ls_rb).
     IF ls_rb-active = 'X'.
@@ -1907,17 +1908,12 @@ FORM build_role_basic_summary.
     ENDIF.
   ENDLOOP.
 
-  lv_score = lv_adv.
-  lv_score += lv_core * '0.2'.
-  lv_score += lv_self / '30'.
-
   CLEAR gt_summary.
   APPEND VALUE #( description = 'Roles AVANZADO'  value = |{ lv_adv }| )  TO gt_summary.
   APPEND VALUE #( description = 'Roles CORE'      value = |{ lv_core }| ) TO gt_summary.
   APPEND VALUE #( description = 'Roles SELF SERV' value = |{ lv_self }| ) TO gt_summary.
   APPEND VALUE #( description = 'Roles activos'   value = |{ lv_active }| ) TO gt_summary.
   APPEND VALUE #( description = 'Roles inactivos' value = |{ lv_inact }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Puntaje FUES'    value = |{ lv_score DECIMALS = 2 }| ) TO gt_summary.
 ENDFORM.
 
 *=====================================================================*

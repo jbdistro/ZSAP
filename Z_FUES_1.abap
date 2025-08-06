@@ -177,6 +177,8 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       lo_alv               TYPE REF TO cl_salv_table,
       gv_fues_enabled      TYPE abap_bool VALUE abap_false.
 
+FIELD-SYMBOLS <fs_rt> LIKE LINE OF gt_role_transaction.
+
 
 *========================================================================*
 * Pantalla de selección: vistas, filtros, flags(2) *
@@ -903,7 +905,7 @@ FORM get_role_transaction_data.
       AND t~tcode    IN @s_tcode
     INTO TABLE @gt_role_transaction.
 
-  LOOP AT gt_role_transaction ASSIGNING FIELD-SYMBOL(<fs_rt>).
+  LOOP AT gt_role_transaction ASSIGNING <fs_rt>.
     <fs_rt>-fues_level = 'No disponible'.
     <fs_rt>-role_top_level = 'No disponible'.
     READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_map>)
@@ -1328,8 +1330,8 @@ FORM build_role_trans_summary.
 
   IF lv_roles = 1.
     READ TABLE gt_fues_role INDEX 1 INTO DATA(ls_only_role).
-    DATA(lv_total_tx) TYPE i.
-    DATA(lv_high_tx) TYPE i.
+    DATA: lv_total_tx  TYPE i,
+          lv_high_tx  TYPE i.
     LOOP AT gt_role_transaction INTO DATA(ls_tx) WHERE role_name = ls_only_role-role_name.
       lv_total_tx += 1.
       IF ls_tx-fues_level = ls_only_role-fues_level.
@@ -1434,7 +1436,7 @@ FORM build_trans_auth_summary.
   APPEND VALUE #( description = 'Asignaciones (filas)'     value = |{ lines( gt_transaction_auth ) }| ) TO gt_summary.
 
   IF lv_tx = 1.
-    DATA(lv_tx_level) TYPE char15 VALUE 'No disponible'.
+    DATA lv_tx_level TYPE char15 VALUE 'No disponible'.
     LOOP AT gt_transaction_auth INTO DATA(ls_tx_level).
       CASE ls_tx_level-fues_level.
         WHEN 'AVANZADO'. lv_tx_level = 'AVANZADO'. EXIT.
@@ -1442,7 +1444,7 @@ FORM build_trans_auth_summary.
         WHEN 'SELF SERV'. IF lv_tx_level = 'No disponible'. lv_tx_level = 'SELF SERV'. ENDIF.
       ENDCASE.
     ENDLOOP.
-    DATA(lv_high_objs) TYPE i.
+    DATA lv_high_objs TYPE i.
     LOOP AT lt_obj_levels INTO ls_ol.
       IF ls_ol-fues_level = lv_tx_level.
         lv_high_objs += 1.

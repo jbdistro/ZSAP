@@ -166,8 +166,8 @@ TYPES: BEGIN OF ty_user_basic,
 *--- Estructura: Vista básica de Rol con nivel FUES
 TYPES: BEGIN OF ty_role_basic,
          role_name      TYPE agr_define-agr_name,
-         valid_from     TYPE agr_define-from_dat,
-         valid_to       TYPE agr_define-to_dat,
+         valid_from     TYPE agr_define-from_date,
+         valid_to       TYPE agr_define-to_date,
          inactive       TYPE c LENGTH 1,
          users_active   TYPE i,
          users_inactive TYPE i,
@@ -1446,15 +1446,15 @@ FORM get_role_basic_data.
 
   CLEAR gt_role_basic.
 
-  SELECT agr_name, from_dat, to_dat
+  SELECT agr_name, from_date, to_date
     FROM agr_define
     WHERE agr_name IN @s_role
     INTO TABLE @lt_roles.
 
   LOOP AT lt_roles INTO ls_role.
     CLEAR: lv_inact, ls_basic.
-    IF ls_role-from_dat > sy-datum OR
-       ( ls_role-to_dat <> '00000000' AND ls_role-to_dat < sy-datum ).
+    IF ls_role-from_date > sy-datum OR
+       ( ls_role-to_date <> '00000000' AND ls_role-to_date < sy-datum ).
       lv_inact = 'X'.
     ENDIF.
 
@@ -1490,8 +1490,8 @@ FORM get_role_basic_data.
     ENDLOOP.
 
     ls_basic-role_name      = ls_role-agr_name.
-    ls_basic-valid_from     = ls_role-from_dat.
-    ls_basic-valid_to       = ls_role-to_dat.
+    ls_basic-valid_from     = ls_role-from_date.
+    ls_basic-valid_to       = ls_role-to_date.
     ls_basic-inactive       = lv_inact.
     ls_basic-users_active   = lv_u_act.
     ls_basic-users_inactive = lv_u_inact.

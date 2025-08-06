@@ -1016,23 +1016,56 @@ ENDFORM.
 * Resumen de relación Usuario ↔ Transacción                           *
 *=====================================================================*
 FORM build_user_tcode_summary.
-  DATA: lv_users TYPE i,
-        lv_tx    TYPE i,
-        lt_users TYPE STANDARD TABLE OF xubname,
-        lt_tx    TYPE STANDARD TABLE OF tcode.
+  DATA: lv_users      TYPE i,
+        lv_tx         TYPE i,
+        lt_users      TYPE STANDARD TABLE OF xubname,
+        lt_tx         TYPE STANDARD TABLE OF tcode,
+        lt_user_level TYPE HASHED TABLE OF ty_user_basic WITH UNIQUE KEY user_id,
+        lv_adv_users  TYPE i,
+        lv_core_users TYPE i,
+        lv_self_users TYPE i.
 
   LOOP AT gt_user_tcode INTO DATA(ls1).
     APPEND ls1-user_id     TO lt_users.
     APPEND ls1-transaction TO lt_tx.
+
+    READ TABLE lt_user_level ASSIGNING FIELD-SYMBOL(<fs_ul>) WITH KEY user_id = ls1-user_id.
+    IF sy-subrc <> 0.
+      INSERT VALUE #( user_id = ls1-user_id fues_level = ls1-fues_level ) INTO TABLE lt_user_level.
+    ELSE.
+      CASE ls1-fues_level.
+        WHEN 'AVANZADO'.
+          <fs_ul>-fues_level = 'AVANZADO'.
+        WHEN 'CORE'.
+          IF <fs_ul>-fues_level <> 'AVANZADO'.
+            <fs_ul>-fues_level = 'CORE'.
+          ENDIF.
+        WHEN 'SELF SERV'.
+          IF <fs_ul>-fues_level = 'No disponible'.
+            <fs_ul>-fues_level = 'SELF SERV'.
+          ENDIF.
+      ENDCASE.
+    ENDIF.
   ENDLOOP.
 
   SORT lt_users. DELETE ADJACENT DUPLICATES FROM lt_users. lv_users = lines( lt_users ).
   SORT lt_tx.    DELETE ADJACENT DUPLICATES FROM lt_tx.    lv_tx    = lines( lt_tx ).
 
+  LOOP AT lt_user_level ASSIGNING <fs_ul>.
+    CASE <fs_ul>-fues_level.
+      WHEN 'AVANZADO'. lv_adv_users  = lv_adv_users  + 1.
+      WHEN 'CORE'.     lv_core_users = lv_core_users + 1.
+      WHEN 'SELF SERV'. lv_self_users = lv_self_users + 1.
+    ENDCASE.
+  ENDLOOP.
+
   CLEAR gt_summary.
   APPEND VALUE #( description = 'Usuarios únicos'      value = |{ lv_users }| )               TO gt_summary.
   APPEND VALUE #( description = 'Transacciones únicas' value = |{ lv_tx }| )                  TO gt_summary.
   APPEND VALUE #( description = 'Asignaciones (filas)' value = |{ lines( gt_user_tcode ) }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios avanzados'    value = |{ lv_adv_users }| )          TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios core'         value = |{ lv_core_users }| )         TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios self'         value = |{ lv_self_users }| )         TO gt_summary.
 ENDFORM.
 
 *=====================================================================*
@@ -1243,10 +1276,15 @@ ENDFORM.
 * Resumen general de vista Rol ↔ Transacción                          *
 *=====================================================================*
 FORM build_role_trans_summary.
-  DATA: lv_roles TYPE i,
-        lv_tx    TYPE i,
-        lt_roles TYPE STANDARD TABLE OF agr_name,
-        lt_tx    TYPE STANDARD TABLE OF tcode.
+  DATA: lv_roles      TYPE i,
+        lv_tx         TYPE i,
+        lt_roles      TYPE STANDARD TABLE OF agr_name,
+        lt_tx         TYPE STANDARD TABLE OF tcode,
+        lv_adv_roles  TYPE i,
+        lv_core_roles TYPE i,
+        lv_self_roles TYPE i,
+        lv_high_level TYPE char15,
+        lv_high_cnt   TYPE i.
 
   LOOP AT gt_role_transaction INTO DATA(ls_rt).
     APPEND ls_rt-role_name   TO lt_roles.
@@ -1257,11 +1295,35 @@ FORM build_role_trans_summary.
   SORT lt_roles. DELETE ADJACENT DUPLICATES FROM lt_roles. lv_roles = lines( lt_roles ).
   SORT lt_tx.    DELETE ADJACENT DUPLICATES FROM lt_tx.    lv_tx    = lines( lt_tx ).
 
+  " Contar roles por nivel FUES
+  LOOP AT gt_fues_role INTO DATA(ls_fr).
+    CASE ls_fr-fues_level.
+      WHEN 'AVANZADO'. lv_adv_roles  = lv_adv_roles  + 1.
+      WHEN 'CORE'.     lv_core_roles = lv_core_roles + 1.
+      WHEN 'SELF SERV'. lv_self_roles = lv_self_roles + 1.
+    ENDCASE.
+  ENDLOOP.
+
+  IF lv_roles = 1.
+    READ TABLE gt_fues_role INTO DATA(ls_only_role) INDEX 1.
+    lv_high_level = ls_only_role-fues_level.
+    LOOP AT gt_role_transaction INTO ls_rt WHERE fues_level = lv_high_level.
+      lv_high_cnt = lv_high_cnt + 1.
+    ENDLOOP.
+  ENDIF.
+
   " Generar resumen
   CLEAR gt_summary.
   APPEND VALUE #( description = 'Roles únicos'          value = |{ lv_roles }| )                      TO gt_summary.
   APPEND VALUE #( description = 'Transacciones únicas'  value = |{ lv_tx }| )                         TO gt_summary.
   APPEND VALUE #( description = 'Asignaciones (filas)'  value = |{ lines( gt_role_transaction ) }| )  TO gt_summary.
+  APPEND VALUE #( description = 'Roles avanzados'       value = |{ lv_adv_roles }| )                  TO gt_summary.
+  APPEND VALUE #( description = 'Roles core'            value = |{ lv_core_roles }| )                 TO gt_summary.
+  APPEND VALUE #( description = 'Roles self'            value = |{ lv_self_roles }| )                 TO gt_summary.
+  IF lv_roles = 1.
+    APPEND VALUE #( description = 'Nivel más alto del rol' value = lv_high_level )                   TO gt_summary.
+    APPEND VALUE #( description = 'Transacciones nivel alto' value = |{ lv_high_cnt }/{ lines( gt_role_transaction ) }| ) TO gt_summary.
+  ENDIF.
 ENDFORM.
 
 *=====================================================================*
@@ -1318,23 +1380,68 @@ ENDFORM.
 * Resumen de relación Transacción ↔ Autorización                      *
 *=====================================================================*
 FORM build_trans_auth_summary.
-  DATA: lv_tx    TYPE i,
-        lv_objs  TYPE i,
-        lt_tx    TYPE STANDARD TABLE OF tcode,
-        lt_objs  TYPE STANDARD TABLE OF agr_1251-object.
+  DATA: lv_tx       TYPE i,
+        lv_objs     TYPE i,
+        lt_tx       TYPE STANDARD TABLE OF tcode,
+        lt_objs     TYPE STANDARD TABLE OF agr_1251-object,
+        lt_obj_lvl  TYPE HASHED TABLE OF ty_auth_fues WITH UNIQUE KEY auth_object,
+        lv_adv_objs TYPE i,
+        lv_core_objs TYPE i,
+        lv_self_objs TYPE i,
+        lv_high_level TYPE char15,
+        lv_high_cnt   TYPE i.
 
   LOOP AT gt_transaction_auth INTO DATA(ls_ta).
     APPEND ls_ta-transaction TO lt_tx.
     APPEND ls_ta-auth_object TO lt_objs.
+
+    READ TABLE lt_obj_lvl ASSIGNING FIELD-SYMBOL(<fs_ol>) WITH KEY auth_object = ls_ta-auth_object.
+    IF sy-subrc <> 0.
+      INSERT VALUE #( auth_object = ls_ta-auth_object fues_level = ls_ta-fues_level ) INTO TABLE lt_obj_lvl.
+    ELSE.
+      CASE ls_ta-fues_level.
+        WHEN 'AVANZADO'. <fs_ol>-fues_level = 'AVANZADO'.
+        WHEN 'CORE'.     IF <fs_ol>-fues_level <> 'AVANZADO'. <fs_ol>-fues_level = 'CORE'. ENDIF.
+        WHEN 'SELF SERV'. IF <fs_ol>-fues_level = 'No disponible'. <fs_ol>-fues_level = 'SELF SERV'. ENDIF.
+      ENDCASE.
+    ENDIF.
   ENDLOOP.
 
   SORT lt_tx.   DELETE ADJACENT DUPLICATES FROM lt_tx.   lv_tx   = lines( lt_tx ).
   SORT lt_objs. DELETE ADJACENT DUPLICATES FROM lt_objs. lv_objs = lines( lt_objs ).
 
+  LOOP AT lt_obj_lvl ASSIGNING <fs_ol>.
+    CASE <fs_ol>-fues_level.
+      WHEN 'AVANZADO'. lv_adv_objs  = lv_adv_objs  + 1.
+      WHEN 'CORE'.     lv_core_objs = lv_core_objs + 1.
+      WHEN 'SELF SERV'. lv_self_objs = lv_self_objs + 1.
+    ENDCASE.
+    IF lv_tx = 1.
+      CASE <fs_ol>-fues_level.
+        WHEN 'AVANZADO'. lv_high_level = 'AVANZADO'.
+        WHEN 'CORE'. IF lv_high_level <> 'AVANZADO'. lv_high_level = 'CORE'. ENDIF.
+        WHEN 'SELF SERV'. IF lv_high_level = space OR lv_high_level = 'No disponible'. lv_high_level = 'SELF SERV'. ENDIF.
+      ENDCASE.
+    ENDIF.
+  ENDLOOP.
+
+  IF lv_tx = 1.
+    LOOP AT lt_obj_lvl ASSIGNING <fs_ol> WHERE fues_level = lv_high_level.
+      lv_high_cnt = lv_high_cnt + 1.
+    ENDLOOP.
+  ENDIF.
+
   CLEAR gt_summary.
   APPEND VALUE #( description = 'Transacciones únicas'     value = |{ lv_tx }| )                        TO gt_summary.
   APPEND VALUE #( description = 'Objetos de autorización'  value = |{ lv_objs }| )                      TO gt_summary.
   APPEND VALUE #( description = 'Asignaciones (filas)'     value = |{ lines( gt_transaction_auth ) }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Objetos avanzados'        value = |{ lv_adv_objs }| )                  TO gt_summary.
+  APPEND VALUE #( description = 'Objetos core'             value = |{ lv_core_objs }| )                 TO gt_summary.
+  APPEND VALUE #( description = 'Objetos self'             value = |{ lv_self_objs }| )                 TO gt_summary.
+  IF lv_tx = 1.
+    APPEND VALUE #( description = 'Nivel más alto' value = lv_high_level )                             TO gt_summary.
+    APPEND VALUE #( description = 'Objetos nivel alto' value = |{ lv_high_cnt }/{ lv_objs }| )         TO gt_summary.
+  ENDIF.
 ENDFORM.
 *=====================================================================*
 * Resumen de relación Usuario ↔ Objeto de autorización                *
@@ -1417,7 +1524,7 @@ FORM display_user_role_alv.
       TRY. lo_cols->get_column( 'ROLES_PER_USER' )->set_medium_text( 'Roles x Usuario' ).   CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USERS_PER_ROLE' )->set_medium_text( 'Usuarios x Rol' ).    CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USER_INACTIVE'  )->set_medium_text( 'Usuario inactivo' ).  CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL'    )->set_medium_text( 'Nivel FUES' ).       CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL'    )->set_technical( abap_true ).       CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ur).
@@ -1524,7 +1631,7 @@ FORM display_user_object_alv.
       TRY. lo_cols->get_column( 'AUTH_OBJECT')->set_medium_text( 'Objeto' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ).        CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).        CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'FUES' ).         CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_uo).
@@ -1633,7 +1740,7 @@ FORM display_trans_auth_alv.
       TRY. lo_cols->get_column( 'AUTH_OBJECT')->set_medium_text( 'Objeto' ).      CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).       CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel' ).       CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ta).

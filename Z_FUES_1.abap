@@ -195,7 +195,9 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       lo_alv               TYPE REF TO cl_salv_table,
       gv_fues_enabled      TYPE abap_bool VALUE abap_false.
 
-FIELD-SYMBOLS <fs_rt> LIKE LINE OF gt_role_transaction.
+FIELD-SYMBOLS:
+  <fs_rt> LIKE LINE OF gt_role_transaction,
+  <fs_ta> LIKE LINE OF gt_transaction_auth.
 
 
 *========================================================================*
@@ -1464,14 +1466,13 @@ FORM get_transaction_auth_data.
   ENDIF.
 
   IF gv_fues_enabled = abap_true AND gt_fues_auth IS NOT INITIAL.
-    DATA(lv_idx) TYPE sy-tabix.
-    LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>) INDEX lv_idx.
+    LOOP AT gt_transaction_auth ASSIGNING <fs_ta>.
       READ TABLE gt_fues_auth TRANSPORTING NO FIELDS
            WITH TABLE KEY auth_object = <fs_ta>-auth_object
                            auth_field  = <fs_ta>-auth_field
                            auth_value  = <fs_ta>-auth_value.
       IF sy-subrc <> 0.
-        DELETE gt_transaction_auth INDEX lv_idx.
+        DELETE gt_transaction_auth INDEX sy-tabix.
       ENDIF.
     ENDLOOP.
   ENDIF.
@@ -1814,7 +1815,12 @@ FORM display_user_basic_alv.
       TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'ROLES_ACTIVE' )->set_medium_text( 'Roles activos' ). CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'ROLES_FUES_LEVEL' )->set_medium_text( 'Roles nivel FUES' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'ROLES_ALL_INACTIVE' )->set_medium_text( 'Sin transacciones activas' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY.
+        DATA(lo_col_rai) = lo_cols->get_column( 'ROLES_ALL_INACTIVE' ).
+        lo_col_rai->set_medium_text( 'Sin transac. activas' ).
+        lo_col_rai->set_long_text( 'Sin transacciones activas' ).
+      CATCH cx_salv_not_found.
+      ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_uf).

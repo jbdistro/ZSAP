@@ -1115,7 +1115,7 @@ FORM build_user_tcode_summary.
     lv_tx_high  = lines( lt_tx_high ).
 
     APPEND VALUE #( description = 'Nivel más alto usuario' value = ls_one_user-fues_level ) TO gt_summary.
-    APPEND VALUE #( description = 'Transacciones nivel máximo' value = |{ lv_tx_high }/{ lv_tx_total }| ) TO gt_summary.
+    APPEND VALUE #( description = 'Transacciones únicas nivel máximo' value = |{ lv_tx_high }/{ lv_tx_total }| ) TO gt_summary.
   ELSE.
     APPEND VALUE #( description = 'Usuarios AVANZADO'  value = |{ lv_adv }| ) TO gt_summary.
     APPEND VALUE #( description = 'Usuarios CORE'      value = |{ lv_core }| ) TO gt_summary.
@@ -1419,7 +1419,7 @@ FORM build_role_trans_summary.
       ENDIF.
     ENDLOOP.
     APPEND VALUE #( description = 'Nivel más alto del rol' value = ls_only_role-fues_level ) TO gt_summary.
-    APPEND VALUE #( description = 'Transacciones nivel máximo' value = |{ lv_high_tx }/{ lv_total_tx }| ) TO gt_summary.
+    APPEND VALUE #( description = 'Transacciones únicas nivel máximo' value = |{ lv_high_tx }/{ lv_total_tx }| ) TO gt_summary.
   ELSE.
     APPEND VALUE #( description = 'Roles AVANZADO'  value = |{ lv_adv_roles }| ) TO gt_summary.
     APPEND VALUE #( description = 'Roles CORE'      value = |{ lv_core_roles }| ) TO gt_summary.
@@ -1536,7 +1536,7 @@ FORM build_trans_auth_summary.
       ENDIF.
     ENDLOOP.
     APPEND VALUE #( description = 'Nivel más alto transacción' value = lv_tx_level ) TO gt_summary.
-    APPEND VALUE #( description = 'Objetos nivel máximo' value = |{ lv_high_objs }/{ lv_objs }| ) TO gt_summary.
+    APPEND VALUE #( description = 'Objetos nivel máximo de transacción' value = |{ lv_high_objs }/{ lv_objs }| ) TO gt_summary.
   ELSE.
     APPEND VALUE #( description = 'Objetos AVANZADO'  value = |{ lv_adv_objs }| ) TO gt_summary.
     APPEND VALUE #( description = 'Objetos CORE'      value = |{ lv_core_objs }| ) TO gt_summary.

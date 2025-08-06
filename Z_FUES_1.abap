@@ -1464,7 +1464,8 @@ FORM get_transaction_auth_data.
   ENDIF.
 
   IF gv_fues_enabled = abap_true AND gt_fues_auth IS NOT INITIAL.
-    LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>) INDEX INTO DATA(lv_idx).
+    DATA(lv_idx) TYPE sy-tabix.
+    LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>) INDEX lv_idx.
       READ TABLE gt_fues_auth TRANSPORTING NO FIELDS
            WITH TABLE KEY auth_object = <fs_ta>-auth_object
                            auth_field  = <fs_ta>-auth_field

@@ -154,6 +154,8 @@ TYPES: BEGIN OF ty_user_basic,
          locked             TYPE c LENGTH 1,
          valid_from         TYPE datum,
          valid_to           TYPE datum,
+         in_bajas           TYPE c LENGTH 1,
+         validity_expired   TYPE c LENGTH 1,
          inactive           TYPE c LENGTH 1,
          fues_level         TYPE char15,
          roles_active       TYPE i,
@@ -1211,7 +1213,7 @@ FORM get_user_basic_data.
 
   DATA: lt_users      TYPE STANDARD TABLE OF ty_user,
         ls_user       TYPE ty_user,
-        lv_inactive   TYPE c LENGTH 1,
+        lv_val_expired TYPE c LENGTH 1,
         lv_locked     TYPE c LENGTH 1,
         ls_user_basic TYPE ty_user_basic.
 
@@ -1229,19 +1231,19 @@ FORM get_user_basic_data.
     INTO TABLE @lt_users.
 
   LOOP AT lt_users INTO ls_user.
-    CLEAR: lv_inactive, lv_locked, ls_user_basic.
-    lv_locked = xsdbool( ls_user-uflag <> 0 ).
-    IF ( ls_user-gltgb <> '00000000' AND ls_user-gltgb > sy-datum )
-       OR ( ls_user-gltgv <> '00000000' AND ls_user-gltgv < sy-datum ).
-      lv_inactive = 'X'.
-    ENDIF.
+    CLEAR: lv_val_expired, lv_locked, ls_user_basic.
+    lv_locked      = xsdbool( ls_user-uflag <> 0 ).
+    lv_val_expired = xsdbool( ( ls_user-gltgb <> '00000000' AND ls_user-gltgb > sy-datum )
+                              OR ( ls_user-gltgv <> '00000000' AND ls_user-gltgv < sy-datum ) ).
 
     ls_user_basic-user_id            = ls_user-user_id.
     ls_user_basic-user_group         = ls_user-user_group.
     ls_user_basic-locked             = lv_locked.
     ls_user_basic-valid_from         = ls_user-gltgb.
     ls_user_basic-valid_to           = ls_user-gltgv.
-    ls_user_basic-inactive           = lv_inactive.
+    ls_user_basic-in_bajas           = xsdbool( ls_user-user_group = 'BAJAS' ).
+    ls_user_basic-validity_expired   = lv_val_expired.
+    ls_user_basic-inactive           = space.
     ls_user_basic-fues_level         = 'No disponible'.
     ls_user_basic-roles_active       = 0.
     ls_user_basic-roles_fues_level   = ''.
@@ -1319,6 +1321,10 @@ FORM annotate_user_role_counts.
     <fs_user>-roles_active       = lv_active_roles.
     <fs_user>-roles_fues_level   = |{ lv_top_roles }/{ lv_active_roles }|.
     <fs_user>-roles_all_inactive = xsdbool( lv_active_roles = 0 ).
+    <fs_user>-inactive = xsdbool( <fs_user>-locked = 'X'
+                                  OR <fs_user>-in_bajas = 'X'
+                                  OR <fs_user>-validity_expired = 'X'
+                                  OR <fs_user>-roles_all_inactive = 'X' ).
     IF <fs_user>-inactive = 'X'.
       <fs_user>-fues_level = '-'.
     ENDIF.
@@ -1801,11 +1807,13 @@ FORM display_user_basic_alv.
       TRY. lo_cols->get_column( 'LOCKED'     )->set_medium_text( 'Bloqueado' ).    CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'VALID_FROM' )->set_medium_text( 'Inicio validez' ). CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'VALID_TO'   )->set_medium_text( 'Fin validez' ).  CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'IN_BAJAS'   )->set_medium_text( 'Grupo bajas' ).  CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'VALIDITY_EXPIRED' )->set_medium_text( 'Validez vencida' ). CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'INACTIVE'   )->set_medium_text( 'Inactivo' ).     CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'ROLES_ACTIVE' )->set_medium_text( 'Roles activos' ). CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'ROLES_FUES_LEVEL' )->set_medium_text( 'Roles nivel FUES' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'ROLES_ALL_INACTIVE' )->set_medium_text( 'Sin roles activos' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'ROLES_ALL_INACTIVE' )->set_medium_text( 'Sin transacciones activas' ). CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_uf).

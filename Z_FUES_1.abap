@@ -140,6 +140,11 @@ TYPES: BEGIN OF ty_user_basic,
          user_id    TYPE xubname,
          user_group TYPE usr02-class,
          inactive   TYPE c LENGTH 1,
+         locked     TYPE c LENGTH 1,
+         valid_from TYPE datum,
+         valid_to   TYPE datum,
+         roles_total TYPE i,
+         roles_active TYPE i,
          fues_level TYPE char15,
        END OF ty_user_basic.
 
@@ -1031,36 +1036,77 @@ FORM get_user_basic_data.
   TYPES: BEGIN OF ty_user,
            user_id    TYPE usr02-bname,
            user_group TYPE usr02-class,
-           gltgv      TYPE usr02-gltgv,
+           valid_from TYPE usr02-gltgv,
+           valid_to   TYPE usr02-gltgb,
+           uflag      TYPE usr02-uflag,
          END OF ty_user.
 
+  TYPES: BEGIN OF ty_role_cnt,
+           user_id TYPE agr_users-uname,
+           total   TYPE i,
+           active  TYPE i,
+         END OF ty_role_cnt.
+
   DATA: lt_users      TYPE STANDARD TABLE OF ty_user,
+        lt_role_cnt   TYPE STANDARD TABLE OF ty_role_cnt,
         ls_user       TYPE ty_user,
-        lv_inactive   TYPE c LENGTH 1,
-        ls_user_basic TYPE ty_user_basic.
+        ls_cnt        TYPE ty_role_cnt,
+        ls_user_basic TYPE ty_user_basic,
+        lv_valid      TYPE abap_bool.
 
   CLEAR gt_user_basic.
 
-  SELECT bname AS user_id,
-         class AS user_group,
-         gltgv
+  SELECT bname    AS user_id,
+         class    AS user_group,
+         gltgv    AS valid_from,
+         gltgb    AS valid_to,
+         uflag
     FROM usr02
     WHERE bname IN @s_user
       AND class IN @s_group
-      AND ( @p_inact = 'X' OR gltgv >= @sy-datum OR gltgv = '00000000' )
+      AND ( @p_inact = 'X' OR gltgb >= @sy-datum OR gltgb = '00000000' )
     INTO TABLE @lt_users.
 
+  IF lt_users IS NOT INITIAL.
+    SELECT uname      AS user_id,
+           COUNT(*)   AS total,
+           SUM( CASE WHEN from_dat <= @sy-datum AND ( to_dat = '00000000' OR to_dat >= @sy-datum )
+                     THEN 1 ELSE 0 END ) AS active
+      FROM agr_users
+      FOR ALL ENTRIES IN @lt_users
+      WHERE uname = @lt_users-user_id
+        AND agr_name IN @s_role
+      GROUP BY uname
+      INTO TABLE @lt_role_cnt.
+  ENDIF.
+
   LOOP AT lt_users INTO ls_user.
-    CLEAR: lv_inactive, ls_user_basic.
-    IF ls_user-gltgv <> '00000000' AND ls_user-gltgv < sy-datum.
-      lv_inactive = 'X'.
+    READ TABLE lt_role_cnt INTO ls_cnt WITH KEY user_id = ls_user-user_id.
+    IF sy-subrc <> 0.
+      CLEAR ls_cnt.
     ENDIF.
 
-    ls_user_basic-user_id    = ls_user-user_id.
-    ls_user_basic-user_group = ls_user-user_group.
-    ls_user_basic-inactive   = lv_inactive.
-    ls_user_basic-fues_level = 'No disponible'.
+    ls_user_basic-user_id     = ls_user-user_id.
+    ls_user_basic-user_group  = ls_user-user_group.
+    ls_user_basic-locked      = COND #( WHEN ls_user-uflag <> '0' THEN 'X' ELSE ' ' ).
+    ls_user_basic-valid_from  = ls_user-valid_from.
+    ls_user_basic-valid_to    = ls_user-valid_to.
+    ls_user_basic-roles_total = ls_cnt-total.
+    ls_user_basic-roles_active = ls_cnt-active.
 
+    lv_valid = xsdbool( ls_user-valid_from <= sy-datum AND
+                        ( ls_user-valid_to = '00000000' OR ls_user-valid_to >= sy-datum ) ).
+
+    IF ls_user_basic-roles_active = 0 AND lv_valid = abap_false AND ls_user_basic-locked = 'X'.
+      ls_user_basic-inactive = 'X'.
+    ELSEIF ( ls_user_basic-roles_active > 0 AND lv_valid = abap_false ) OR
+           ( ls_user_basic-roles_active = 0 AND lv_valid = abap_true ).
+      ls_user_basic-inactive = 'Y'.
+    ELSE.
+      ls_user_basic-inactive = ' '.
+    ENDIF.
+
+    ls_user_basic-fues_level = 'No disponible'.
     APPEND ls_user_basic TO gt_user_basic.
   ENDLOOP.
 
@@ -1082,7 +1128,7 @@ FORM calculate_user_basic_fues.
     INNER JOIN usr02   AS u  ON u~bname   = r~uname
     WHERE r~uname  IN @s_user
       AND u~class IN @s_group
-      AND ( @p_inact = 'X' OR u~gltgv >= @sy-datum OR u~gltgv = '00000000' )
+      AND ( @p_inact = 'X' OR u~gltgb >= @sy-datum OR u~gltgb = '00000000' )
     INTO CORRESPONDING FIELDS OF TABLE @lt_user_obj.
 
   LOOP AT lt_user_obj INTO DATA(ls_obj).
@@ -1120,22 +1166,28 @@ FORM build_user_basic_summary.
         lv_self     TYPE i,
         lv_active   TYPE i,
         lv_inactive TYPE i,
+        lv_error    TYPE i,
         lv_score    TYPE decfloat16.
 
   LOOP AT gt_user_basic INTO DATA(ls_ub).
-    CASE ls_ub-fues_level.
-      WHEN 'AVANZADO'.
-        lv_adv += 1.
-      WHEN 'CORE'.
-        lv_core += 1.
-      WHEN 'SELF SERV'.
-        lv_self += 1.
+    CASE ls_ub-inactive.
+      WHEN 'X'.
+        lv_inactive += 1.
+      WHEN 'Y'.
+        lv_error += 1.
+      WHEN OTHERS.
+        lv_active += 1.
     ENDCASE.
 
-    IF ls_ub-inactive = 'X'.
-      lv_inactive += 1.
-    ELSE.
-      lv_active += 1.
+    IF ls_ub-inactive <> 'X'.
+      CASE ls_ub-fues_level.
+        WHEN 'AVANZADO'.
+          lv_adv += 1.
+        WHEN 'CORE'.
+          lv_core += 1.
+        WHEN 'SELF SERV'.
+          lv_self += 1.
+      ENDCASE.
     ENDIF.
   ENDLOOP.
 
@@ -1144,12 +1196,13 @@ FORM build_user_basic_summary.
   lv_score += lv_self / '30'.
 
   CLEAR gt_summary.
-  APPEND VALUE #( description = 'Usuarios AVANZADO'  value = |{ lv_adv }| )       TO gt_summary.
-  APPEND VALUE #( description = 'Usuarios CORE'      value = |{ lv_core }| )      TO gt_summary.
-  APPEND VALUE #( description = 'Usuarios SELF SERV' value = |{ lv_self }| )      TO gt_summary.
-  APPEND VALUE #( description = 'Usuarios activos'   value = |{ lv_active }| )    TO gt_summary.
-  APPEND VALUE #( description = 'Usuarios inactivos' value = |{ lv_inactive }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Puntaje FUES'       value = |{ lv_score DECIMALS = 2 }| )    TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios AVANZADO (activos/Y)'  value = |{ lv_adv }| )       TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios CORE (activos/Y)'      value = |{ lv_core }| )      TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios SELF SERV (activos/Y)' value = |{ lv_self }| )      TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios activos (sin X ni Y)'  value = |{ lv_active }| )    TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios inactivos (X)'         value = |{ lv_inactive }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios con error (Y)'         value = |{ lv_error }| )    TO gt_summary.
+  APPEND VALUE #( description = 'Puntaje FUES'                   value = |{ lv_score DECIMALS = 2 }| )    TO gt_summary.
 ENDFORM.
 
 *=====================================================================*
@@ -1507,8 +1560,21 @@ FORM display_user_basic_alv.
       DATA(lo_cols) = lo_alv->get_columns( ).
       TRY. lo_cols->get_column( 'USER_ID'    )->set_medium_text( 'Usuario' ).      CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USER_GROUP' )->set_medium_text( 'Grupo' ).        CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'INACTIVE'   )->set_medium_text( 'Inactivo' ).     CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
+      TRY.
+        lo_cols->get_column( 'INACTIVE' )->set_medium_text( 'Inactivo' ).
+        lo_cols->get_column( 'INACTIVE' )->set_output_length( 3 ).
+      CATCH cx_salv_not_found.
+      ENDTRY.
+      TRY.
+        lo_cols->get_column( 'LOCKED' )->set_medium_text( 'Bloqueado' ).
+        lo_cols->get_column( 'LOCKED' )->set_output_length( 3 ).
+      CATCH cx_salv_not_found.
+      ENDTRY.
+      TRY. lo_cols->get_column( 'VALID_FROM'  )->set_medium_text( 'Inicio validez' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'VALID_TO'    )->set_medium_text( 'Fin validez' ).    CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'ROLES_TOTAL' )->set_medium_text( 'Roles totales' ).  CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'ROLES_ACTIVE' )->set_medium_text( 'Roles activos' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).      CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_uf).

@@ -1656,7 +1656,7 @@ FORM display_user_basic_alv.
   TRY.
       cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_user_basic ).
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
-      DATA(lo_cnt_ub) = lo_grid->add_control( row = 1 column = 1 ).
+      DATA(lo_cnt_ub) = lo_grid->create_control( row = 1 column = 1 ).
       cl_salv_table=>factory(
         EXPORTING r_container = lo_cnt_ub->get_container( )
         IMPORTING r_salv_table = DATA(lo_sum_ub)
@@ -1704,7 +1704,7 @@ FORM display_role_fues_alv.
   TRY.
       cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_fues_role ).
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
-      DATA(lo_cnt_rf) = lo_grid->add_control( row = 1 column = 1 ).
+      DATA(lo_cnt_rf) = lo_grid->create_control( row = 1 column = 1 ).
       cl_salv_table=>factory(
         EXPORTING r_container = lo_cnt_rf->get_container( )
         IMPORTING r_salv_table = DATA(lo_sum)

@@ -170,7 +170,7 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       gt_user_object       TYPE STANDARD TABLE OF ty_user_object,
       gt_user_profile      TYPE STANDARD TABLE OF ty_user_profile,
       gt_user_basic        TYPE STANDARD TABLE OF ty_user_basic,
-      gt_role_basic        TYPE STANDARD TABLE OF ty_role_basic,
+      gt_role_basic        TYPE SORTED TABLE OF ty_role_basic WITH UNIQUE KEY role_name,
       gt_fues_tcode        TYPE SORTED TABLE  OF ty_tcode_fues WITH UNIQUE KEY transaction,
       gt_fues_auth         TYPE HASHED TABLE  OF ty_auth_fues WITH UNIQUE KEY auth_object auth_field auth_value,
       gt_fues_role         TYPE STANDARD TABLE OF ty_role_fues,
@@ -1277,10 +1277,9 @@ FORM build_role_fues_data.
     INTO TABLE @DATA(lt_roles).
 
   LOOP AT lt_roles INTO DATA(ls_role).
-    READ TABLE gt_role_basic ASSIGNING FIELD-SYMBOL(<fs_rb>) WITH KEY role_name = ls_role-role_name.
+    READ TABLE gt_role_basic ASSIGNING FIELD-SYMBOL(<fs_rb>) WITH TABLE KEY role_name = ls_role-role_name.
     IF sy-subrc <> 0.
-      APPEND VALUE #( role_name = ls_role-role_name fues_level = 'No disponible' ) TO gt_role_basic.
-      READ TABLE gt_role_basic ASSIGNING <fs_rb> WITH KEY role_name = ls_role-role_name.
+      INSERT VALUE #( role_name = ls_role-role_name fues_level = 'No disponible' ) INTO TABLE gt_role_basic ASSIGNING <fs_rb>.
     ENDIF.
     <fs_rb>-users_total += 1.
     IF ls_role-from_date <= sy-datum AND ( ls_role-to_date = '00000000' OR ls_role-to_date >= sy-datum ).
@@ -1294,11 +1293,11 @@ FORM build_role_fues_data.
   ENDIF.
 
   LOOP AT gt_fues_role INTO DATA(ls_rf).
-    READ TABLE gt_role_basic ASSIGNING <fs_rb> WITH KEY role_name = ls_rf-role_name.
+    READ TABLE gt_role_basic ASSIGNING <fs_rb> WITH TABLE KEY role_name = ls_rf-role_name.
     IF sy-subrc = 0.
       <fs_rb>-fues_level = ls_rf-fues_level.
     ELSE.
-      APPEND VALUE #( role_name = ls_rf-role_name users_total = 0 users_active = 0 fues_level = ls_rf-fues_level ) TO gt_role_basic.
+      INSERT VALUE #( role_name = ls_rf-role_name users_total = 0 users_active = 0 fues_level = ls_rf-fues_level ) INTO TABLE gt_role_basic.
     ENDIF.
   ENDLOOP.
 
@@ -1307,13 +1306,11 @@ FORM build_role_fues_data.
     INTO TABLE @DATA(lt_all_roles).
 
   LOOP AT lt_all_roles INTO DATA(lv_role).
-    READ TABLE gt_role_basic ASSIGNING <fs_rb> WITH KEY role_name = lv_role.
+    READ TABLE gt_role_basic ASSIGNING <fs_rb> WITH TABLE KEY role_name = lv_role.
     IF sy-subrc <> 0.
-      APPEND VALUE #( role_name = lv_role users_total = 0 users_active = 0 fues_level = 'No disponible' ) TO gt_role_basic.
+      INSERT VALUE #( role_name = lv_role users_total = 0 users_active = 0 fues_level = 'No disponible' ) INTO TABLE gt_role_basic.
     ENDIF.
   ENDLOOP.
-
-  SORT gt_role_basic BY role_name.
 ENDFORM.
 
 *=====================================================================*

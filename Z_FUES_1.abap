@@ -260,52 +260,34 @@ ENDFORM.
 * Cálculo de nivel FUES para cada rol                                  *
 *=====================================================================*
 FORM calculate_role_fues.
+  FIELD-SYMBOLS: <fs_tx>   LIKE LINE OF gt_fues_tcode,
+                 <fs_role> LIKE LINE OF gt_fues_role.
+
   CLEAR gt_fues_role.
 
-  IF gt_transaction_auth IS INITIAL.
-    PERFORM get_transaction_auth_data.
-  ENDIF.
   IF gt_fues_tcode IS INITIAL.
+    IF gt_transaction_auth IS INITIAL.
+      PERFORM get_transaction_auth_data.
+    ENDIF.
     PERFORM calculate_transaction_fues.
   ENDIF.
 
   LOOP AT gt_role_transaction INTO DATA(ls_rt).
     DATA(lv_level) = 'No disponible'.
 
-    LOOP AT gt_transaction_auth ASSIGNING FIELD-SYMBOL(<fs_ta>)
-         WHERE role_name = ls_rt-role_name
-           AND transaction = ls_rt-transaction.
-      CASE <fs_ta>-fues_level.
-        WHEN 'AVANZADO'.
-          lv_level = 'AVANZADO'.
-          EXIT.
-        WHEN 'CORE'.
-          IF lv_level <> 'AVANZADO'.
-            lv_level = 'CORE'.
-          ENDIF.
-        WHEN 'SELF SERV'.
-          IF lv_level = 'No disponible'.
-            lv_level = 'SELF SERV'.
-          ENDIF.
-      ENDCASE.
-    ENDLOOP.
-
-    IF lv_level = 'No disponible'.
-      READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_tx>)
-           WITH KEY transaction = ls_rt-transaction BINARY SEARCH.
-      IF sy-subrc = 0.
-        lv_level = <fs_tx>-fues_level.
-      ENDIF.
+    READ TABLE gt_fues_tcode ASSIGNING <fs_tx>
+         WITH KEY transaction = ls_rt-transaction.
+    IF sy-subrc = 0.
+      lv_level = <fs_tx>-fues_level.
     ENDIF.
 
-    READ TABLE gt_fues_role ASSIGNING FIELD-SYMBOL(<fs_role>)
-         WITH KEY role_name = ls_rt-role_name BINARY SEARCH.
+    READ TABLE gt_fues_role ASSIGNING <fs_role>
+         WITH KEY role_name = ls_rt-role_name.
     IF sy-subrc <> 0.
       APPEND VALUE ty_role_fues( role_name = ls_rt-role_name
                                  fues_level = 'No disponible' ) TO gt_fues_role.
-      SORT gt_fues_role BY role_name.
       READ TABLE gt_fues_role ASSIGNING <fs_role>
-           WITH KEY role_name = ls_rt-role_name BINARY SEARCH.
+           WITH KEY role_name = ls_rt-role_name.
     ENDIF.
 
     CASE lv_level.
@@ -873,6 +855,16 @@ ENDFORM.
 * Obtener transacciones asociadas a cada rol (AGR_TCODE)              *
 *=====================================================================*
 FORM get_role_transaction_data.
+  FIELD-SYMBOLS: <fs_rt>  LIKE LINE OF gt_role_transaction,
+                 <fs_map> LIKE LINE OF gt_fues_tcode.
+
+  IF gv_fues_enabled = abap_true AND gt_fues_tcode IS INITIAL.
+    IF gt_transaction_auth IS INITIAL.
+      PERFORM get_transaction_auth_data.
+    ENDIF.
+    PERFORM calculate_transaction_fues.
+  ENDIF.
+
   SELECT a~agr_name AS role_name,
          t~tcode    AS transaction,
          s~ttext    AS description
@@ -883,12 +875,14 @@ FORM get_role_transaction_data.
       AND t~tcode    IN @s_tcode
     INTO TABLE @gt_role_transaction.
 
-  LOOP AT gt_role_transaction ASSIGNING FIELD-SYMBOL(<fs_rt>).
+  LOOP AT gt_role_transaction ASSIGNING <fs_rt>.
     <fs_rt>-fues_level = 'No disponible'.
-    READ TABLE gt_fues_tcode ASSIGNING FIELD-SYMBOL(<fs_map>)
-         WITH KEY transaction = <fs_rt>-transaction.
-    IF sy-subrc = 0.
-      <fs_rt>-fues_level = <fs_map>-fues_level.
+    IF gv_fues_enabled = abap_true.
+      READ TABLE gt_fues_tcode ASSIGNING <fs_map>
+           WITH KEY transaction = <fs_rt>-transaction.
+      IF sy-subrc = 0.
+        <fs_rt>-fues_level = <fs_map>-fues_level.
+      ENDIF.
     ENDIF.
   ENDLOOP.
 
@@ -928,7 +922,7 @@ FORM get_user_tcode_data.
   ENDIF.
 
   SORT gt_user_tcode BY user_id user_group transaction role_name.
-  DELETE ADJACENT DUPLICATES FROM gt_user_tcode COMPARING user_id user_group transaction role_name.
+  DELETE ADJACENT DUPLICATES FROM gt_user_tcode COMPARING user_id user_group transaction.
 
   LOOP AT gt_user_tcode ASSIGNING <ls_ut>.
     <ls_ut>-fues_level = 'No disponible'.

@@ -366,7 +366,7 @@ FORM get_role_user_counts.
     ENDIF.
 
     <fs_rf>-users_total = <fs_rf>-users_total + 1.
-    IF ls_ru-from_date <= sy-datum AND ( ls_ru-to_dat = '00000000' OR ls_ru-to_dat >= sy-datum ).
+    IF ls_ru-from_date <= sy-datum AND ( ls_ru-to_date = '00000000' OR ls_ru-to_date >= sy-datum ).
       <fs_rf>-users_active = <fs_rf>-users_active + 1.
     ENDIF.
   ENDLOOP.
@@ -1656,11 +1656,14 @@ FORM display_user_basic_alv.
   TRY.
       cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_user_basic ).
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
-      cl_salv_table=>factory( IMPORTING r_salv_table = DATA(lo_sum_ub) CHANGING t_table = gt_summary ).
+      DATA(lo_cnt_ub) = lo_grid->add_control( row = 1 column = 1 ).
+      cl_salv_table=>factory(
+        EXPORTING r_container = lo_cnt_ub->get_container( )
+        IMPORTING r_salv_table = DATA(lo_sum_ub)
+        CHANGING t_table = gt_summary ).
       lo_sum_ub->get_columns( )->get_column( 'DESCRIPTION' )->set_medium_text( 'Resumen' ).
       lo_sum_ub->get_columns( )->get_column( 'VALUE' )->set_medium_text( 'Cantidad' ).
       lo_sum_ub->get_display_settings( )->set_striped_pattern( abap_true ).
-      lo_grid->create_control( row = 1 column = 1 control = lo_sum_ub ).
       lo_alv->set_end_of_list( lo_grid ).
 
       lo_alv->get_functions( )->set_all( abap_true ).
@@ -1701,11 +1704,14 @@ FORM display_role_fues_alv.
   TRY.
       cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_fues_role ).
       DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
-      cl_salv_table=>factory( IMPORTING r_salv_table = DATA(lo_sum) CHANGING t_table = gt_summary ).
+      DATA(lo_cnt_rf) = lo_grid->add_control( row = 1 column = 1 ).
+      cl_salv_table=>factory(
+        EXPORTING r_container = lo_cnt_rf->get_container( )
+        IMPORTING r_salv_table = DATA(lo_sum)
+        CHANGING t_table = gt_summary ).
       lo_sum->get_columns( )->get_column( 'DESCRIPTION' )->set_medium_text( 'Resumen' ).
       lo_sum->get_columns( )->get_column( 'VALUE' )->set_medium_text( 'Cantidad' ).
       lo_sum->get_display_settings( )->set_striped_pattern( abap_true ).
-      lo_grid->create_control( row = 1 column = 1 control = lo_sum ).
       lo_alv->set_end_of_list( lo_grid ).
 
       lo_alv->get_functions( )->set_all( abap_true ).

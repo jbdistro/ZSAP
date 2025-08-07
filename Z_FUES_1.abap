@@ -63,6 +63,7 @@ TYPES: BEGIN OF ty_user_role,
          roles_per_user TYPE i,
          users_per_role TYPE i,
          user_inactive  TYPE c LENGTH 1,
+         fues_level     TYPE char15,
        END OF ty_user_role.
 
 *--- Estructura: Relación Usuario ↔ Transacción
@@ -135,26 +136,21 @@ TYPES: BEGIN OF ty_role_fues,
          core_ratio TYPE p DECIMALS 2,
        END OF ty_role_fues.
 
+*--- Estructura: Nivel FUES por Usuario
+TYPES: BEGIN OF ty_user_fues,
+         user_id    TYPE xubname,
+         fues_level TYPE char15,
+         adv_ratio  TYPE p DECIMALS 2,
+         core_ratio TYPE p DECIMALS 2,
+       END OF ty_user_fues.
+
 *--- Estructura: Vista básica de Usuario con nivel FUES
 TYPES: BEGIN OF ty_user_basic,
-         user_id     TYPE xubname,
-         user_group  TYPE usr02-class,
-         valid_from  TYPE datum,
-         valid_to    TYPE datum,
-         roles_total TYPE i,
-         roles_active TYPE i,
-         locked      TYPE c LENGTH 1,
-         inactive    TYPE c LENGTH 1,
-         fues_level  TYPE char15,
+         user_id    TYPE xubname,
+         user_group TYPE usr02-class,
+         inactive   TYPE c LENGTH 1,
+         fues_level TYPE char15,
        END OF ty_user_basic.
-
-*--- Estructura: Vista básica de Rol con nivel FUES
-TYPES: BEGIN OF ty_role_basic,
-         role_name    TYPE agr_define-agr_name,
-         users_total  TYPE i,
-         users_active TYPE i,
-         fues_level   TYPE char15,
-       END OF ty_role_basic.
 
 *--- Estructura: Resumen genérico de conteo (usuarios, roles, etc.)
 TYPES: BEGIN OF ty_summary,
@@ -170,10 +166,10 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       gt_user_object       TYPE STANDARD TABLE OF ty_user_object,
       gt_user_profile      TYPE STANDARD TABLE OF ty_user_profile,
       gt_user_basic        TYPE STANDARD TABLE OF ty_user_basic,
-      gt_role_basic        TYPE STANDARD TABLE OF ty_role_basic WITH UNIQUE KEY role_name,
       gt_fues_tcode        TYPE SORTED TABLE  OF ty_tcode_fues WITH UNIQUE KEY transaction,
       gt_fues_auth         TYPE HASHED TABLE  OF ty_auth_fues WITH UNIQUE KEY auth_object auth_field auth_value,
       gt_fues_role         TYPE STANDARD TABLE OF ty_role_fues,
+      gt_fues_user         TYPE STANDARD TABLE OF ty_user_fues,
       gt_summary           TYPE STANDARD TABLE OF ty_summary,
       lo_alv               TYPE REF TO cl_salv_table,
       gv_fues_enabled      TYPE abap_bool VALUE abap_false.
@@ -192,7 +188,6 @@ SELECTION-SCREEN BEGIN OF BLOCK blk1 WITH FRAME TITLE TEXT-b01. " Selección de 
   PARAMETERS r_usrobj  RADIOBUTTON GROUP rb1.              " Vista: Usuario–Objeto
   PARAMETERS r_uprof   RADIOBUTTON GROUP rb1.              " Vista: Usuario–Perfil
   PARAMETERS r_ufues RADIOBUTTON GROUP rb1.                " Vista: Usuarios (Nivel FUES)
-  PARAMETERS r_rfues  RADIOBUTTON GROUP rb1.               " Vista: Roles (Nivel FUES)
   PARAMETERS rb_trans  RADIOBUTTON GROUP rb1.              " Vista: Transacción–Autorización
 
 SELECTION-SCREEN END OF BLOCK blk1.
@@ -229,9 +224,7 @@ SELECTION-SCREEN END OF BLOCK blk3.
 * Lógica principal: Dispatcher de vistas según opción seleccionada (3) *
 *======================================================================*
 START-OF-SELECTION.
-  IF rb_role = 'X' OR r_usr_tx = 'X' OR r_usrobj = 'X' OR r_ufues = 'X' OR r_rfues = 'X' OR rb_trans = 'X'.
-    PERFORM load_fues_data.
-  ENDIF.
+  PERFORM load_fues_data.
   CASE 'X'.
     WHEN rb_user.   PERFORM process_user_role_view.          " Vista Rol-Usuario
     WHEN rb_role.   PERFORM process_role_transaction_view.   " Vista Rol-Transacción
@@ -239,7 +232,6 @@ START-OF-SELECTION.
     WHEN r_usrobj.  PERFORM process_user_object_view.        " Vista Usuario-Objeto
     WHEN r_uprof.   PERFORM process_user_profile_view.       " Vista Usuario-Perfil
     WHEN r_ufues.  PERFORM process_user_fues_view.          " Vista Usuarios (Nivel FUES)
-    WHEN r_rfues.  PERFORM process_role_fues_view.          " Vista Roles (Nivel FUES)
     WHEN rb_trans.  PERFORM process_transaction_auth_view.   " Vista Transacción-Autorización
   ENDCASE.
 
@@ -251,6 +243,29 @@ FORM process_user_role_view.
   PERFORM add_roles_without_users.   " Añadir roles definidos que no tengan usuarios asignados
   PERFORM add_users_without_roles.   " Añadir usuarios sin asignaciones a ningún rol
   PERFORM calculate_counts.          " Calcular cantidad de roles por usuario y usuarios por rol
+  PERFORM get_role_transaction_data. " Obtener transacciones por rol para cálculo FUES
+  CLEAR gt_fues_role.
+  LOOP AT gt_role_transaction INTO DATA(ls_rt_init).
+    READ TABLE gt_fues_role WITH KEY role_name = ls_rt_init-role_name TRANSPORTING NO FIELDS.
+    IF sy-subrc <> 0.
+      APPEND VALUE ty_role_fues( role_name = ls_rt_init-role_name
+                                 fues_level = 'No disponible' ) TO gt_fues_role.
+    ENDIF.
+  ENDLOOP.
+
+  CLEAR gt_fues_user.
+  LOOP AT gt_user_role INTO DATA(ls_ur_init).
+    READ TABLE gt_fues_user WITH KEY user_id = ls_ur_init-user_id TRANSPORTING NO FIELDS.
+    IF sy-subrc <> 0.
+      APPEND VALUE ty_user_fues( user_id = ls_ur_init-user_id
+                                 fues_level = 'No disponible' ) TO gt_fues_user.
+    ENDIF.
+  ENDLOOP.
+
+  IF gv_fues_enabled = abap_true.
+    PERFORM calculate_role_fues.     " Determinar nivel FUES por rol
+    PERFORM calculate_user_fues.     " Determinar nivel FUES por usuario
+  ENDIF.
   PERFORM apply_user_role_filters.   " Filtrar resultados según flags de exclusión
   PERFORM build_user_role_summary.   " Construir resumen cuantitativo de la vista
   PERFORM display_user_role_alv.     " Mostrar datos en tabla ALV SALV
@@ -341,6 +356,61 @@ ENDFORM.
 *=====================================================================*
 * Cálculo de nivel FUES por usuario                                    *
 *=====================================================================*
+FORM calculate_user_fues.
+  CLEAR gt_fues_user.
+
+  SORT gt_fues_role BY role_name.
+
+  LOOP AT gt_user_role INTO DATA(ls_ur).
+    READ TABLE gt_fues_role ASSIGNING FIELD-SYMBOL(<fs_role>)
+         WITH KEY role_name = ls_ur-role_name BINARY SEARCH.
+
+    DATA lv_level TYPE char15 VALUE 'No disponible'.
+    IF sy-subrc = 0.
+      lv_level = <fs_role>-fues_level.
+    ENDIF.
+
+    READ TABLE gt_fues_user ASSIGNING FIELD-SYMBOL(<fs_user>)
+         WITH KEY user_id = ls_ur-user_id BINARY SEARCH.
+    IF sy-subrc <> 0.
+      DATA(ls_new_user) = VALUE ty_user_fues( user_id    = ls_ur-user_id
+                                             fues_level = 'No disponible' ).
+      APPEND ls_new_user TO gt_fues_user.
+      SORT gt_fues_user BY user_id.
+      READ TABLE gt_fues_user ASSIGNING <fs_user>
+           WITH KEY user_id = ls_ur-user_id BINARY SEARCH.
+    ENDIF.
+
+    CASE lv_level.
+      WHEN 'AVANZADO'.
+        <fs_user>-fues_level = 'AVANZADO'.
+        <fs_user>-adv_ratio = <fs_user>-adv_ratio + 1.
+      WHEN 'CORE'.
+        IF <fs_user>-fues_level <> 'AVANZADO'.
+          <fs_user>-fues_level = 'CORE'.
+        ENDIF.
+        <fs_user>-core_ratio = <fs_user>-core_ratio + 1.
+      WHEN 'SELF SERV'.
+        IF <fs_user>-fues_level = 'No disponible'.
+          <fs_user>-fues_level = 'SELF SERV'.
+        ENDIF.
+    ENDCASE.
+
+    " Actualizar nivel FUES en tabla de salida de usuario-rol
+    ls_ur-fues_level = <fs_user>-fues_level.
+    MODIFY gt_user_role FROM ls_ur INDEX sy-tabix.
+  ENDLOOP.
+
+  LOOP AT gt_fues_user ASSIGNING <fs_user>.
+    DATA lv_total TYPE i.
+    lv_total = <fs_user>-adv_ratio + <fs_user>-core_ratio.
+    IF lv_total > 0.
+      <fs_user>-adv_ratio = <fs_user>-adv_ratio / lv_total * 100.
+      <fs_user>-core_ratio = <fs_user>-core_ratio / lv_total * 100.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+
 *=====================================================================*
 * Carga de archivo Excel de clasificación FUES - SOLUTION 1 (Recommended)
 *=====================================================================*
@@ -629,15 +699,6 @@ FORM process_user_fues_view.
 ENDFORM.
 
 *=====================================================================*
-* Vista Roles con nivel FUES (Rol/FUES)                              *
-*=====================================================================*
-FORM process_role_fues_view.
-  PERFORM build_role_fues_data.    " Obtener roles y conteos
-  PERFORM build_role_fues_summary. " Generar resumen de roles
-  PERFORM display_role_fues_alv.   " Mostrar datos en tabla ALV SALV
-ENDFORM.
-
-*=====================================================================*
 * Vista Transacción ↔ Autorización (4.6)                              *
 *=====================================================================*
 FORM process_transaction_auth_view.
@@ -690,6 +751,7 @@ FORM get_user_role_data.
   LOOP AT lt_temp ASSIGNING FIELD-SYMBOL(<fs_temp>).
     <fs_temp>-roles_per_user = 0.
     <fs_temp>-users_per_role = 0.
+    <fs_temp>-fues_level     = 'No disponible'.
   ENDLOOP.
 
   gt_user_role = lt_temp.
@@ -954,23 +1016,56 @@ ENDFORM.
 * Resumen de relación Usuario ↔ Transacción                           *
 *=====================================================================*
 FORM build_user_tcode_summary.
-  DATA: lv_users TYPE i,
-        lv_tx    TYPE i,
-        lt_users TYPE STANDARD TABLE OF xubname,
-        lt_tx    TYPE STANDARD TABLE OF tcode.
+  DATA: lv_users      TYPE i,
+        lv_tx         TYPE i,
+        lt_users      TYPE STANDARD TABLE OF xubname,
+        lt_tx         TYPE STANDARD TABLE OF tcode,
+        lt_user_level TYPE HASHED TABLE OF ty_user_basic WITH UNIQUE KEY user_id,
+        lv_adv_users  TYPE i,
+        lv_core_users TYPE i,
+        lv_self_users TYPE i.
 
   LOOP AT gt_user_tcode INTO DATA(ls1).
     APPEND ls1-user_id     TO lt_users.
     APPEND ls1-transaction TO lt_tx.
+
+    READ TABLE lt_user_level ASSIGNING FIELD-SYMBOL(<fs_ul>) WITH KEY user_id = ls1-user_id.
+    IF sy-subrc <> 0.
+      INSERT VALUE #( user_id = ls1-user_id fues_level = ls1-fues_level ) INTO TABLE lt_user_level.
+    ELSE.
+      CASE ls1-fues_level.
+        WHEN 'AVANZADO'.
+          <fs_ul>-fues_level = 'AVANZADO'.
+        WHEN 'CORE'.
+          IF <fs_ul>-fues_level <> 'AVANZADO'.
+            <fs_ul>-fues_level = 'CORE'.
+          ENDIF.
+        WHEN 'SELF SERV'.
+          IF <fs_ul>-fues_level = 'No disponible'.
+            <fs_ul>-fues_level = 'SELF SERV'.
+          ENDIF.
+      ENDCASE.
+    ENDIF.
   ENDLOOP.
 
   SORT lt_users. DELETE ADJACENT DUPLICATES FROM lt_users. lv_users = lines( lt_users ).
   SORT lt_tx.    DELETE ADJACENT DUPLICATES FROM lt_tx.    lv_tx    = lines( lt_tx ).
 
+  LOOP AT lt_user_level ASSIGNING <fs_ul>.
+    CASE <fs_ul>-fues_level.
+      WHEN 'AVANZADO'. lv_adv_users  = lv_adv_users  + 1.
+      WHEN 'CORE'.     lv_core_users = lv_core_users + 1.
+      WHEN 'SELF SERV'. lv_self_users = lv_self_users + 1.
+    ENDCASE.
+  ENDLOOP.
+
   CLEAR gt_summary.
   APPEND VALUE #( description = 'Usuarios únicos'      value = |{ lv_users }| )               TO gt_summary.
   APPEND VALUE #( description = 'Transacciones únicas' value = |{ lv_tx }| )                  TO gt_summary.
   APPEND VALUE #( description = 'Asignaciones (filas)' value = |{ lines( gt_user_tcode ) }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios avanzados'    value = |{ lv_adv_users }| )          TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios core'         value = |{ lv_core_users }| )         TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios self'         value = |{ lv_self_users }| )         TO gt_summary.
 ENDFORM.
 
 *=====================================================================*
@@ -1056,95 +1151,36 @@ FORM get_user_basic_data.
   TYPES: BEGIN OF ty_user,
            user_id    TYPE usr02-bname,
            user_group TYPE usr02-class,
-           valid_from TYPE usr02-gltgv,
-           valid_to   TYPE usr02-gltgb,
-           uflag      TYPE usr02-uflag,
+           gltgv      TYPE usr02-gltgv,
          END OF ty_user.
 
-  TYPES: BEGIN OF ty_role_cnt,
-           user_id TYPE agr_users-uname,
-           total   TYPE i,
-           active  TYPE i,
-         END OF ty_role_cnt.
-
   DATA: lt_users      TYPE STANDARD TABLE OF ty_user,
-        lt_role_cnt   TYPE STANDARD TABLE OF ty_role_cnt,
         ls_user       TYPE ty_user,
-        ls_cnt        TYPE ty_role_cnt,
-        ls_user_basic TYPE ty_user_basic,
-        lv_valid      TYPE abap_bool.
+        lv_inactive   TYPE c LENGTH 1,
+        ls_user_basic TYPE ty_user_basic.
 
   CLEAR gt_user_basic.
 
-  SELECT bname    AS user_id,
-         class    AS user_group,
-         gltgv    AS valid_from,
-         gltgb    AS valid_to,
-         uflag
+  SELECT bname AS user_id,
+         class AS user_group,
+         gltgv
     FROM usr02
     WHERE bname IN @s_user
       AND class IN @s_group
-      AND ( @p_inact = 'X' OR gltgb >= @sy-datum OR gltgb = '00000000' )
+      AND ( @p_inact = 'X' OR gltgv >= @sy-datum OR gltgv = '00000000' )
     INTO TABLE @lt_users.
 
-    IF lt_users IS NOT INITIAL.
-      SELECT uname      AS user_id,
-             from_dat   AS from_date,
-             to_dat     AS to_date
-        FROM agr_users
-        FOR ALL ENTRIES IN @lt_users
-        WHERE uname = @lt_users-user_id
-          AND agr_name IN @s_role
-        INTO TABLE @DATA(lt_roles).
-
-      LOOP AT lt_roles INTO DATA(ls_role).
-        READ TABLE lt_role_cnt INTO ls_cnt WITH KEY user_id = ls_role-user_id.
-        IF sy-subrc = 0.
-          ls_cnt-total = ls_cnt-total + 1.
-          IF ls_role-from_date <= sy-datum AND ( ls_role-to_date = '00000000' OR ls_role-to_date >= sy-datum ).
-            ls_cnt-active = ls_cnt-active + 1.
-          ENDIF.
-          MODIFY lt_role_cnt FROM ls_cnt INDEX sy-tabix.
-        ELSE.
-          CLEAR ls_cnt.
-          ls_cnt-user_id = ls_role-user_id.
-          ls_cnt-total = 1.
-          IF ls_role-from_date <= sy-datum AND ( ls_role-to_date = '00000000' OR ls_role-to_date >= sy-datum ).
-            ls_cnt-active = 1.
-          ENDIF.
-          APPEND ls_cnt TO lt_role_cnt.
-        ENDIF.
-      ENDLOOP.
-    ENDIF.
-
   LOOP AT lt_users INTO ls_user.
-    READ TABLE lt_role_cnt INTO ls_cnt WITH KEY user_id = ls_user-user_id.
-    IF sy-subrc <> 0.
-      CLEAR ls_cnt.
+    CLEAR: lv_inactive, ls_user_basic.
+    IF ls_user-gltgv <> '00000000' AND ls_user-gltgv < sy-datum.
+      lv_inactive = 'X'.
     ENDIF.
 
-    ls_user_basic-user_id      = ls_user-user_id.
-    ls_user_basic-user_group   = ls_user-user_group.
-    ls_user_basic-valid_from   = ls_user-valid_from.
-    ls_user_basic-valid_to     = ls_user-valid_to.
-    ls_user_basic-roles_total  = ls_cnt-total.
-    ls_user_basic-roles_active = ls_cnt-active.
-    ls_user_basic-locked       = COND #( WHEN ls_user-uflag <> '0' THEN 'X' ELSE ' ' ).
-
-    lv_valid = xsdbool( ls_user-valid_from <= sy-datum AND
-                        ( ls_user-valid_to = '00000000' OR ls_user-valid_to >= sy-datum ) ).
-
-    IF ls_user_basic-roles_active = 0 AND lv_valid = abap_false AND ls_user_basic-locked = 'X'.
-      ls_user_basic-inactive = 'X'.
-    ELSEIF lv_valid = abap_false.
-      ls_user_basic-inactive = 'F'.
-    ELSEIF ls_user_basic-roles_active = 0.
-      ls_user_basic-inactive = 'R'.
-    ELSE.
-      ls_user_basic-inactive = ' '.
-    ENDIF.
-
+    ls_user_basic-user_id    = ls_user-user_id.
+    ls_user_basic-user_group = ls_user-user_group.
+    ls_user_basic-inactive   = lv_inactive.
     ls_user_basic-fues_level = 'No disponible'.
+
     APPEND ls_user_basic TO gt_user_basic.
   ENDLOOP.
 
@@ -1166,7 +1202,7 @@ FORM calculate_user_basic_fues.
     INNER JOIN usr02   AS u  ON u~bname   = r~uname
     WHERE r~uname  IN @s_user
       AND u~class IN @s_group
-      AND ( @p_inact = 'X' OR u~gltgb >= @sy-datum OR u~gltgb = '00000000' )
+      AND ( @p_inact = 'X' OR u~gltgv >= @sy-datum OR u~gltgv = '00000000' )
     INTO CORRESPONDING FIELDS OF TABLE @lt_user_obj.
 
   LOOP AT lt_user_obj INTO DATA(ls_obj).
@@ -1199,196 +1235,56 @@ ENDFORM.
 * Resumen de Usuarios con nivel FUES                                 *
 *=====================================================================*
 FORM build_user_basic_summary.
-  DATA: lv_adv_clean   TYPE i,
-        lv_core_clean  TYPE i,
-        lv_self_clean  TYPE i,
-        lv_adv_total   TYPE i,
-        lv_core_total  TYPE i,
-        lv_self_total  TYPE i,
-        lv_active      TYPE i,
-        lv_inactive    TYPE i,
-        lv_error       TYPE i,
-        lv_score_clean TYPE decfloat16,
-        lv_score_total TYPE decfloat16.
-
-  LOOP AT gt_user_basic INTO DATA(ls_ub).
-    CASE ls_ub-inactive.
-      WHEN 'X'.
-        lv_inactive += 1.
-      WHEN 'F' OR 'R'.
-        lv_error += 1.
-      WHEN OTHERS.
-        lv_active += 1.
-    ENDCASE.
-
-    IF ls_ub-inactive <> 'X'.
-      CASE ls_ub-fues_level.
-        WHEN 'AVANZADO'.
-          lv_adv_total += 1.
-          IF ls_ub-inactive = ' '.
-            lv_adv_clean += 1.
-          ENDIF.
-        WHEN 'CORE'.
-          lv_core_total += 1.
-          IF ls_ub-inactive = ' '.
-            lv_core_clean += 1.
-          ENDIF.
-        WHEN 'SELF SERV'.
-          lv_self_total += 1.
-          IF ls_ub-inactive = ' '.
-            lv_self_clean += 1.
-          ENDIF.
-      ENDCASE.
-    ENDIF.
-  ENDLOOP.
-
-  lv_score_clean = lv_adv_clean.
-  lv_score_clean += lv_core_clean * '0.2'.
-  lv_score_clean += lv_self_clean / '30'.
-
-  lv_score_total = lv_adv_total.
-  lv_score_total += lv_core_total * '0.2'.
-  lv_score_total += lv_self_total / '30'.
-
-  CLEAR gt_summary.
-  APPEND VALUE #( description = 'Usuarios AVANZADO (activos sin error)'  value = |{ lv_adv_clean }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Usuarios CORE (activos sin error)'      value = |{ lv_core_clean }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Usuarios SELF SERV (activos sin error)' value = |{ lv_self_clean }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Usuarios activos'       value = |{ lv_active }| )       TO gt_summary.
-  APPEND VALUE #( description = 'Usuarios inactivos (X)' value = |{ lv_inactive }| )    TO gt_summary.
-  APPEND VALUE #( description = 'Usuarios activos con error (E)' value = |{ lv_error }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Puntaje FUES (activos sin error)' value = |{ lv_score_clean DECIMALS = 2 }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Puntaje FUES real (incluye errores)' value = |{ lv_score_total DECIMALS = 2 }| ) TO gt_summary.
-ENDFORM.
-
-*=====================================================================*
-* Construir datos para vista Rol/Nivel FUES                          *
-*=====================================================================*
-FORM build_role_fues_data.
-  CLEAR gt_role_basic.
-
-  SELECT agr_name AS role_name,
-         uname     AS user_id,
-         from_dat  AS from_date,
-         to_dat    AS to_date
-    FROM agr_users
-    WHERE agr_name IN @s_role
-      AND uname     IN @s_user
-    INTO TABLE @DATA(lt_roles).
-
-  LOOP AT lt_roles INTO DATA(ls_role).
-    READ TABLE gt_role_basic ASSIGNING FIELD-SYMBOL(<fs_rb>) WITH KEY role_name = ls_role-role_name.
-    IF sy-subrc <> 0.
-      INSERT VALUE #( role_name = ls_role-role_name fues_level = 'No disponible' ) INTO TABLE gt_role_basic ASSIGNING <fs_rb>.
-    ENDIF.
-    <fs_rb>-users_total += 1.
-    IF ls_role-from_date <= sy-datum AND ( ls_role-to_date = '00000000' OR ls_role-to_date >= sy-datum ).
-      <fs_rb>-users_active += 1.
-    ENDIF.
-  ENDLOOP.
-
-  IF gv_fues_enabled = abap_true.
-    PERFORM get_role_transaction_data.
-    PERFORM calculate_role_fues.
-  ENDIF.
-
-  LOOP AT gt_fues_role INTO DATA(ls_rf).
-    READ TABLE gt_role_basic ASSIGNING <fs_rb> WITH KEY role_name = ls_rf-role_name.
-    IF sy-subrc = 0.
-      <fs_rb>-fues_level = ls_rf-fues_level.
-    ELSE.
-      INSERT VALUE #( role_name = ls_rf-role_name users_total = 0 users_active = 0 fues_level = ls_rf-fues_level ) INTO TABLE gt_role_basic.
-    ENDIF.
-  ENDLOOP.
-
-  SELECT agr_name FROM agr_define
-    WHERE agr_name IN @s_role
-    INTO TABLE @DATA(lt_all_roles).
-
-  LOOP AT lt_all_roles INTO DATA(lv_role).
-    READ TABLE gt_role_basic ASSIGNING <fs_rb> WITH KEY role_name = lv_role.
-    IF sy-subrc <> 0.
-      INSERT VALUE #( role_name = lv_role users_total = 0 users_active = 0 fues_level = 'No disponible' ) INTO TABLE gt_role_basic.
-    ENDIF.
-  ENDLOOP.
-ENDFORM.
-
-*=====================================================================*
-* Resumen para vista Rol/Nivel FUES                                  *
-*=====================================================================*
-FORM build_role_fues_summary.
-  DATA: lv_total    TYPE i,
+  DATA: lv_adv      TYPE i,
+        lv_core     TYPE i,
+        lv_self     TYPE i,
         lv_active   TYPE i,
         lv_inactive TYPE i,
-        lv_adv      TYPE i,
-        lv_core     TYPE i,
-        lv_self     TYPE i.
+        lv_score    TYPE decfloat16.
 
-  LOOP AT gt_role_basic INTO DATA(ls_rb).
-    lv_total += 1.
-    IF ls_rb-users_active > 0.
-      lv_active += 1.
-    ELSE.
-      lv_inactive += 1.
-    ENDIF.
-    CASE ls_rb-fues_level.
-      WHEN 'AVANZADO'. lv_adv += 1.
-      WHEN 'CORE'.     lv_core += 1.
-      WHEN 'SELF SERV'. lv_self += 1.
+  LOOP AT gt_user_basic INTO DATA(ls_ub).
+    CASE ls_ub-fues_level.
+      WHEN 'AVANZADO'.
+        lv_adv += 1.
+      WHEN 'CORE'.
+        lv_core += 1.
+      WHEN 'SELF SERV'.
+        lv_self += 1.
     ENDCASE.
+
+    IF ls_ub-inactive = 'X'.
+      lv_inactive += 1.
+    ELSE.
+      lv_active += 1.
+    ENDIF.
   ENDLOOP.
 
+  lv_score = lv_adv.
+  lv_score += lv_core * '0.2'.
+  lv_score += lv_self / '30'.
+
   CLEAR gt_summary.
-  APPEND VALUE #( description = 'Roles totales'    value = |{ lv_total }| )    TO gt_summary.
-  APPEND VALUE #( description = 'Roles activos'    value = |{ lv_active }| )   TO gt_summary.
-  APPEND VALUE #( description = 'Roles inactivos'  value = |{ lv_inactive }| ) TO gt_summary.
-  APPEND VALUE #( description = 'Roles AVANZADO'   value = |{ lv_adv }| )      TO gt_summary.
-  APPEND VALUE #( description = 'Roles CORE'       value = |{ lv_core }| )     TO gt_summary.
-  APPEND VALUE #( description = 'Roles SELF SERV'  value = |{ lv_self }| )     TO gt_summary.
-ENDFORM.
-
-*=====================================================================*
-* Mostrar ALV para vista Rol/Nivel FUES                               *
-*=====================================================================*
-FORM display_role_fues_alv.
-  TRY.
-      cl_salv_table=>factory( IMPORTING r_salv_table = lo_alv CHANGING t_table = gt_role_basic ).
-      DATA(lo_grid) = NEW cl_salv_form_layout_grid( ).
-
-      DATA(lv_row) = 1.
-      LOOP AT gt_summary INTO DATA(ls_sum).
-        lo_grid->create_label( row = lv_row column = 1 text = ls_sum-description ).
-        lo_grid->create_text(  row = lv_row column = 2 text = ls_sum-value ).
-        lv_row = lv_row + 1.
-      ENDLOOP.
-      lo_alv->set_end_of_list( lo_grid ).
-
-      lo_alv->get_functions( )->set_all( abap_true ).
-      lo_alv->get_display_settings( )->set_striped_pattern( abap_true ).
-      lo_alv->get_display_settings( )->set_list_header( 'Roles con nivel FUES' ).
-
-      DATA(lo_cols) = lo_alv->get_columns( ).
-      TRY. lo_cols->get_column( 'ROLE_NAME'    )->set_medium_text( 'Rol' ).                     CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'USERS_TOTAL'  )->set_medium_text( 'Usuarios con rol' ).        CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'USERS_ACTIVE' )->set_long_text( 'Usuarios con rol activo' ).  CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL'   )->set_medium_text( 'Nivel FUES' ).              CATCH cx_salv_not_found. ENDTRY.
-
-      lo_alv->display( ).
-    CATCH cx_salv_msg INTO DATA(lx_msg_rf).
-      MESSAGE lx_msg_rf->get_text( ) TYPE 'E'.
-    CATCH cx_root INTO DATA(lx_any_rf).
-      MESSAGE lx_any_rf->get_text( ) TYPE 'E'.
-  ENDTRY.
+  APPEND VALUE #( description = 'Usuarios AVANZADO'  value = |{ lv_adv }| )       TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios CORE'      value = |{ lv_core }| )      TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios SELF SERV' value = |{ lv_self }| )      TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios activos'   value = |{ lv_active }| )    TO gt_summary.
+  APPEND VALUE #( description = 'Usuarios inactivos' value = |{ lv_inactive }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Puntaje FUES'       value = |{ lv_score DECIMALS = 2 }| )    TO gt_summary.
 ENDFORM.
 
 *=====================================================================*
 * Resumen general de vista Rol ↔ Transacción                          *
 *=====================================================================*
 FORM build_role_trans_summary.
-  DATA: lv_roles TYPE i,
-        lv_tx    TYPE i,
-        lt_roles TYPE STANDARD TABLE OF agr_name,
-        lt_tx    TYPE STANDARD TABLE OF tcode.
+  DATA: lv_roles      TYPE i,
+        lv_tx         TYPE i,
+        lt_roles      TYPE STANDARD TABLE OF agr_name,
+        lt_tx         TYPE STANDARD TABLE OF tcode,
+        lv_adv_roles  TYPE i,
+        lv_core_roles TYPE i,
+        lv_self_roles TYPE i,
+        lv_high_level TYPE char15,
+        lv_high_cnt   TYPE i.
 
   LOOP AT gt_role_transaction INTO DATA(ls_rt).
     APPEND ls_rt-role_name   TO lt_roles.
@@ -1399,11 +1295,35 @@ FORM build_role_trans_summary.
   SORT lt_roles. DELETE ADJACENT DUPLICATES FROM lt_roles. lv_roles = lines( lt_roles ).
   SORT lt_tx.    DELETE ADJACENT DUPLICATES FROM lt_tx.    lv_tx    = lines( lt_tx ).
 
+  " Contar roles por nivel FUES
+  LOOP AT gt_fues_role INTO DATA(ls_fr).
+    CASE ls_fr-fues_level.
+      WHEN 'AVANZADO'. lv_adv_roles  = lv_adv_roles  + 1.
+      WHEN 'CORE'.     lv_core_roles = lv_core_roles + 1.
+      WHEN 'SELF SERV'. lv_self_roles = lv_self_roles + 1.
+    ENDCASE.
+  ENDLOOP.
+
+  IF lv_roles = 1.
+    READ TABLE gt_fues_role INTO DATA(ls_only_role) INDEX 1.
+    lv_high_level = ls_only_role-fues_level.
+    LOOP AT gt_role_transaction INTO ls_rt WHERE fues_level = lv_high_level.
+      lv_high_cnt = lv_high_cnt + 1.
+    ENDLOOP.
+  ENDIF.
+
   " Generar resumen
   CLEAR gt_summary.
   APPEND VALUE #( description = 'Roles únicos'          value = |{ lv_roles }| )                      TO gt_summary.
   APPEND VALUE #( description = 'Transacciones únicas'  value = |{ lv_tx }| )                         TO gt_summary.
   APPEND VALUE #( description = 'Asignaciones (filas)'  value = |{ lines( gt_role_transaction ) }| )  TO gt_summary.
+  APPEND VALUE #( description = 'Roles avanzados'       value = |{ lv_adv_roles }| )                  TO gt_summary.
+  APPEND VALUE #( description = 'Roles core'            value = |{ lv_core_roles }| )                 TO gt_summary.
+  APPEND VALUE #( description = 'Roles self'            value = |{ lv_self_roles }| )                 TO gt_summary.
+  IF lv_roles = 1.
+    APPEND VALUE #( description = 'Nivel más alto del rol' value = lv_high_level )                   TO gt_summary.
+    APPEND VALUE #( description = 'Transacciones nivel alto' value = |{ lv_high_cnt }/{ lines( gt_role_transaction ) }| ) TO gt_summary.
+  ENDIF.
 ENDFORM.
 
 *=====================================================================*
@@ -1460,23 +1380,68 @@ ENDFORM.
 * Resumen de relación Transacción ↔ Autorización                      *
 *=====================================================================*
 FORM build_trans_auth_summary.
-  DATA: lv_tx    TYPE i,
-        lv_objs  TYPE i,
-        lt_tx    TYPE STANDARD TABLE OF tcode,
-        lt_objs  TYPE STANDARD TABLE OF agr_1251-object.
+  DATA: lv_tx       TYPE i,
+        lv_objs     TYPE i,
+        lt_tx       TYPE STANDARD TABLE OF tcode,
+        lt_objs     TYPE STANDARD TABLE OF agr_1251-object,
+        lt_obj_lvl  TYPE HASHED TABLE OF ty_auth_fues WITH UNIQUE KEY auth_object,
+        lv_adv_objs TYPE i,
+        lv_core_objs TYPE i,
+        lv_self_objs TYPE i,
+        lv_high_level TYPE char15,
+        lv_high_cnt   TYPE i.
 
   LOOP AT gt_transaction_auth INTO DATA(ls_ta).
     APPEND ls_ta-transaction TO lt_tx.
     APPEND ls_ta-auth_object TO lt_objs.
+
+    READ TABLE lt_obj_lvl ASSIGNING FIELD-SYMBOL(<fs_ol>) WITH KEY auth_object = ls_ta-auth_object.
+    IF sy-subrc <> 0.
+      INSERT VALUE #( auth_object = ls_ta-auth_object fues_level = ls_ta-fues_level ) INTO TABLE lt_obj_lvl.
+    ELSE.
+      CASE ls_ta-fues_level.
+        WHEN 'AVANZADO'. <fs_ol>-fues_level = 'AVANZADO'.
+        WHEN 'CORE'.     IF <fs_ol>-fues_level <> 'AVANZADO'. <fs_ol>-fues_level = 'CORE'. ENDIF.
+        WHEN 'SELF SERV'. IF <fs_ol>-fues_level = 'No disponible'. <fs_ol>-fues_level = 'SELF SERV'. ENDIF.
+      ENDCASE.
+    ENDIF.
   ENDLOOP.
 
   SORT lt_tx.   DELETE ADJACENT DUPLICATES FROM lt_tx.   lv_tx   = lines( lt_tx ).
   SORT lt_objs. DELETE ADJACENT DUPLICATES FROM lt_objs. lv_objs = lines( lt_objs ).
 
+  LOOP AT lt_obj_lvl ASSIGNING <fs_ol>.
+    CASE <fs_ol>-fues_level.
+      WHEN 'AVANZADO'. lv_adv_objs  = lv_adv_objs  + 1.
+      WHEN 'CORE'.     lv_core_objs = lv_core_objs + 1.
+      WHEN 'SELF SERV'. lv_self_objs = lv_self_objs + 1.
+    ENDCASE.
+    IF lv_tx = 1.
+      CASE <fs_ol>-fues_level.
+        WHEN 'AVANZADO'. lv_high_level = 'AVANZADO'.
+        WHEN 'CORE'. IF lv_high_level <> 'AVANZADO'. lv_high_level = 'CORE'. ENDIF.
+        WHEN 'SELF SERV'. IF lv_high_level = space OR lv_high_level = 'No disponible'. lv_high_level = 'SELF SERV'. ENDIF.
+      ENDCASE.
+    ENDIF.
+  ENDLOOP.
+
+  IF lv_tx = 1.
+    LOOP AT lt_obj_lvl ASSIGNING <fs_ol> WHERE fues_level = lv_high_level.
+      lv_high_cnt = lv_high_cnt + 1.
+    ENDLOOP.
+  ENDIF.
+
   CLEAR gt_summary.
   APPEND VALUE #( description = 'Transacciones únicas'     value = |{ lv_tx }| )                        TO gt_summary.
   APPEND VALUE #( description = 'Objetos de autorización'  value = |{ lv_objs }| )                      TO gt_summary.
   APPEND VALUE #( description = 'Asignaciones (filas)'     value = |{ lines( gt_transaction_auth ) }| ) TO gt_summary.
+  APPEND VALUE #( description = 'Objetos avanzados'        value = |{ lv_adv_objs }| )                  TO gt_summary.
+  APPEND VALUE #( description = 'Objetos core'             value = |{ lv_core_objs }| )                 TO gt_summary.
+  APPEND VALUE #( description = 'Objetos self'             value = |{ lv_self_objs }| )                 TO gt_summary.
+  IF lv_tx = 1.
+    APPEND VALUE #( description = 'Nivel más alto' value = lv_high_level )                             TO gt_summary.
+    APPEND VALUE #( description = 'Objetos nivel alto' value = |{ lv_high_cnt }/{ lv_objs }| )         TO gt_summary.
+  ENDIF.
 ENDFORM.
 *=====================================================================*
 * Resumen de relación Usuario ↔ Objeto de autorización                *
@@ -1559,6 +1524,7 @@ FORM display_user_role_alv.
       TRY. lo_cols->get_column( 'ROLES_PER_USER' )->set_medium_text( 'Roles x Usuario' ).   CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USERS_PER_ROLE' )->set_medium_text( 'Usuarios x Rol' ).    CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USER_INACTIVE'  )->set_medium_text( 'Usuario inactivo' ).  CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL'    )->set_technical( abap_true ).       CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ur).
@@ -1665,7 +1631,7 @@ FORM display_user_object_alv.
       TRY. lo_cols->get_column( 'AUTH_OBJECT')->set_medium_text( 'Objeto' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ).        CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).        CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'FUES' ).         CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_uo).
@@ -1736,21 +1702,8 @@ FORM display_user_basic_alv.
       DATA(lo_cols) = lo_alv->get_columns( ).
       TRY. lo_cols->get_column( 'USER_ID'    )->set_medium_text( 'Usuario' ).      CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USER_GROUP' )->set_medium_text( 'Grupo' ).        CATCH cx_salv_not_found. ENDTRY.
-      TRY.
-        lo_cols->get_column( 'INACTIVE' )->set_medium_text( 'Inactivo' ).
-        lo_cols->get_column( 'INACTIVE' )->set_output_length( 3 ).
-      CATCH cx_salv_not_found.
-      ENDTRY.
-      TRY.
-        lo_cols->get_column( 'LOCKED' )->set_medium_text( 'Bloqueado' ).
-        lo_cols->get_column( 'LOCKED' )->set_output_length( 3 ).
-      CATCH cx_salv_not_found.
-      ENDTRY.
-      TRY. lo_cols->get_column( 'VALID_FROM'  )->set_medium_text( 'Inicio validez' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'VALID_TO'    )->set_medium_text( 'Fin validez' ).    CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'ROLES_TOTAL' )->set_medium_text( 'Roles totales' ).  CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'ROLES_ACTIVE' )->set_medium_text( 'Roles activos' ). CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).      CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'INACTIVE'   )->set_medium_text( 'Inactivo' ).     CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_uf).
@@ -1787,7 +1740,7 @@ FORM display_trans_auth_alv.
       TRY. lo_cols->get_column( 'AUTH_OBJECT')->set_medium_text( 'Objeto' ).      CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_FIELD' )->set_medium_text( 'Campo' ).       CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'AUTH_VALUE' )->set_medium_text( 'Valor' ).       CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel' ).       CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'FUES_LEVEL' )->set_medium_text( 'Nivel FUES' ).   CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ta).

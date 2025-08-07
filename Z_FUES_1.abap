@@ -1373,7 +1373,7 @@ FORM display_role_fues_alv.
       DATA(lo_cols) = lo_alv->get_columns( ).
       TRY. lo_cols->get_column( 'ROLE_NAME'    )->set_medium_text( 'Rol' ).                     CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USERS_TOTAL'  )->set_medium_text( 'Usuarios con rol' ).        CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'USERS_ACTIVE' )->set_medium_text( 'Usuarios con rol activo' ). CATCH cx_salv_not_found. ENDTRY.
+      TRY. lo_cols->get_column( 'USERS_ACTIVE' )->set_long_text( 'Usuarios con rol activo' ).  CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'FUES_LEVEL'   )->set_medium_text( 'Nivel FUES' ).              CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).

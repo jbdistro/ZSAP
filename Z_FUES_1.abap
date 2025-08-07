@@ -1067,18 +1067,35 @@ FORM get_user_basic_data.
       AND ( @p_inact = 'X' OR gltgb >= @sy-datum OR gltgb = '00000000' )
     INTO TABLE @lt_users.
 
-  IF lt_users IS NOT INITIAL.
-    SELECT uname      AS user_id,
-           COUNT(*)   AS total,
-           SUM( CASE WHEN from_dat <= @sy-datum AND ( to_dat = '00000000' OR to_dat >= @sy-datum )
-                     THEN 1 ELSE 0 END ) AS active
-      FROM agr_users
-      FOR ALL ENTRIES IN @lt_users
-      WHERE uname = @lt_users-user_id
-        AND agr_name IN @s_role
-      GROUP BY uname
-      INTO TABLE @lt_role_cnt.
-  ENDIF.
+    IF lt_users IS NOT INITIAL.
+      SELECT uname      AS user_id,
+             from_dat   AS from_date,
+             to_dat     AS to_date
+        FROM agr_users
+        FOR ALL ENTRIES IN @lt_users
+        WHERE uname = @lt_users-user_id
+          AND agr_name IN @s_role
+        INTO TABLE @DATA(lt_roles).
+
+      LOOP AT lt_roles INTO DATA(ls_role).
+        READ TABLE lt_role_cnt INTO ls_cnt WITH KEY user_id = ls_role-user_id.
+        IF sy-subrc = 0.
+          ls_cnt-total = ls_cnt-total + 1.
+          IF ls_role-from_date <= sy-datum AND ( ls_role-to_date = '00000000' OR ls_role-to_date >= sy-datum ).
+            ls_cnt-active = ls_cnt-active + 1.
+          ENDIF.
+          MODIFY lt_role_cnt FROM ls_cnt INDEX sy-tabix.
+        ELSE.
+          CLEAR ls_cnt.
+          ls_cnt-user_id = ls_role-user_id.
+          ls_cnt-total = 1.
+          IF ls_role-from_date <= sy-datum AND ( ls_role-to_date = '00000000' OR ls_role-to_date >= sy-datum ).
+            ls_cnt-active = 1.
+          ENDIF.
+          APPEND ls_cnt TO lt_role_cnt.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
 
   LOOP AT lt_users INTO ls_user.
     READ TABLE lt_role_cnt INTO ls_cnt WITH KEY user_id = ls_user-user_id.

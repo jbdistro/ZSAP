@@ -1268,18 +1268,35 @@ FORM build_role_fues_data.
     FROM agr_users
     WHERE agr_name IN @s_role
       AND uname     IN @s_user
-    INTO TABLE @DATA(lt_roles).
+    INTO TABLE @DATA(lt_roles_raw).
 
-  LOOP AT lt_roles INTO DATA(ls_role).
-    READ TABLE gt_role_basic ASSIGNING FIELD-SYMBOL(<fs_rb>) WITH KEY role_name = ls_role-role_name.
+  DATA(lt_roles_total) = lt_roles_raw.
+  DATA(lt_roles_active) = lt_roles_raw.
+
+  DELETE lt_roles_active WHERE NOT ( from_date <= sy-datum AND ( to_date = '00000000' OR to_date >= sy-datum ) ).
+
+  SORT lt_roles_total BY role_name user_id.
+  DELETE ADJACENT DUPLICATES FROM lt_roles_total COMPARING role_name user_id.
+
+  SORT lt_roles_active BY role_name user_id.
+  DELETE ADJACENT DUPLICATES FROM lt_roles_active COMPARING role_name user_id.
+
+  LOOP AT lt_roles_total INTO DATA(ls_tot).
+    READ TABLE gt_role_basic ASSIGNING FIELD-SYMBOL(<fs_rb>) WITH KEY role_name = ls_tot-role_name.
     IF sy-subrc <> 0.
-      APPEND VALUE #( role_name = ls_role-role_name fues_level = 'No disponible' ) TO gt_role_basic.
-      READ TABLE gt_role_basic ASSIGNING <fs_rb> WITH KEY role_name = ls_role-role_name.
+      APPEND VALUE #( role_name = ls_tot-role_name fues_level = 'No disponible' ) TO gt_role_basic.
+      READ TABLE gt_role_basic ASSIGNING <fs_rb> WITH KEY role_name = ls_tot-role_name.
     ENDIF.
     <fs_rb>-users_total += 1.
-    IF ls_role-from_date <= sy-datum AND ( ls_role-to_date = '00000000' OR ls_role-to_date >= sy-datum ).
-      <fs_rb>-users_active += 1.
+  ENDLOOP.
+
+  LOOP AT lt_roles_active INTO DATA(ls_act).
+    READ TABLE gt_role_basic ASSIGNING <fs_rb> WITH KEY role_name = ls_act-role_name.
+    IF sy-subrc <> 0.
+      APPEND VALUE #( role_name = ls_act-role_name fues_level = 'No disponible' ) TO gt_role_basic.
+      READ TABLE gt_role_basic ASSIGNING <fs_rb> WITH KEY role_name = ls_act-role_name.
     ENDIF.
+    <fs_rb>-users_active += 1.
   ENDLOOP.
 
   IF gv_fues_enabled = abap_true.

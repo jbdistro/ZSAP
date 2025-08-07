@@ -63,7 +63,6 @@ TYPES: BEGIN OF ty_user_role,
          roles_per_user TYPE i,
          users_per_role TYPE i,
          user_inactive  TYPE c LENGTH 1,
-         fues_level     TYPE char15,
        END OF ty_user_role.
 
 *--- Estructura: Relación Usuario ↔ Transacción
@@ -136,14 +135,6 @@ TYPES: BEGIN OF ty_role_fues,
          core_ratio TYPE p DECIMALS 2,
        END OF ty_role_fues.
 
-*--- Estructura: Nivel FUES por Usuario
-TYPES: BEGIN OF ty_user_fues,
-         user_id    TYPE xubname,
-         fues_level TYPE char15,
-         adv_ratio  TYPE p DECIMALS 2,
-         core_ratio TYPE p DECIMALS 2,
-       END OF ty_user_fues.
-
 *--- Estructura: Vista básica de Usuario con nivel FUES
 TYPES: BEGIN OF ty_user_basic,
          user_id    TYPE xubname,
@@ -169,7 +160,6 @@ DATA: gt_user_role         TYPE STANDARD TABLE OF ty_user_role,
       gt_fues_tcode        TYPE SORTED TABLE  OF ty_tcode_fues WITH UNIQUE KEY transaction,
       gt_fues_auth         TYPE HASHED TABLE  OF ty_auth_fues WITH UNIQUE KEY auth_object auth_field auth_value,
       gt_fues_role         TYPE STANDARD TABLE OF ty_role_fues,
-      gt_fues_user         TYPE STANDARD TABLE OF ty_user_fues,
       gt_summary           TYPE STANDARD TABLE OF ty_summary,
       lo_alv               TYPE REF TO cl_salv_table,
       gv_fues_enabled      TYPE abap_bool VALUE abap_false.
@@ -224,7 +214,9 @@ SELECTION-SCREEN END OF BLOCK blk3.
 * Lógica principal: Dispatcher de vistas según opción seleccionada (3) *
 *======================================================================*
 START-OF-SELECTION.
-  PERFORM load_fues_data.
+  IF rb_role = 'X' OR r_usr_tx = 'X' OR r_usrobj = 'X' OR r_ufues = 'X' OR rb_trans = 'X'.
+    PERFORM load_fues_data.
+  ENDIF.
   CASE 'X'.
     WHEN rb_user.   PERFORM process_user_role_view.          " Vista Rol-Usuario
     WHEN rb_role.   PERFORM process_role_transaction_view.   " Vista Rol-Transacción
@@ -243,29 +235,6 @@ FORM process_user_role_view.
   PERFORM add_roles_without_users.   " Añadir roles definidos que no tengan usuarios asignados
   PERFORM add_users_without_roles.   " Añadir usuarios sin asignaciones a ningún rol
   PERFORM calculate_counts.          " Calcular cantidad de roles por usuario y usuarios por rol
-  PERFORM get_role_transaction_data. " Obtener transacciones por rol para cálculo FUES
-  CLEAR gt_fues_role.
-  LOOP AT gt_role_transaction INTO DATA(ls_rt_init).
-    READ TABLE gt_fues_role WITH KEY role_name = ls_rt_init-role_name TRANSPORTING NO FIELDS.
-    IF sy-subrc <> 0.
-      APPEND VALUE ty_role_fues( role_name = ls_rt_init-role_name
-                                 fues_level = 'No disponible' ) TO gt_fues_role.
-    ENDIF.
-  ENDLOOP.
-
-  CLEAR gt_fues_user.
-  LOOP AT gt_user_role INTO DATA(ls_ur_init).
-    READ TABLE gt_fues_user WITH KEY user_id = ls_ur_init-user_id TRANSPORTING NO FIELDS.
-    IF sy-subrc <> 0.
-      APPEND VALUE ty_user_fues( user_id = ls_ur_init-user_id
-                                 fues_level = 'No disponible' ) TO gt_fues_user.
-    ENDIF.
-  ENDLOOP.
-
-  IF gv_fues_enabled = abap_true.
-    PERFORM calculate_role_fues.     " Determinar nivel FUES por rol
-    PERFORM calculate_user_fues.     " Determinar nivel FUES por usuario
-  ENDIF.
   PERFORM apply_user_role_filters.   " Filtrar resultados según flags de exclusión
   PERFORM build_user_role_summary.   " Construir resumen cuantitativo de la vista
   PERFORM display_user_role_alv.     " Mostrar datos en tabla ALV SALV
@@ -356,61 +325,6 @@ ENDFORM.
 *=====================================================================*
 * Cálculo de nivel FUES por usuario                                    *
 *=====================================================================*
-FORM calculate_user_fues.
-  CLEAR gt_fues_user.
-
-  SORT gt_fues_role BY role_name.
-
-  LOOP AT gt_user_role INTO DATA(ls_ur).
-    READ TABLE gt_fues_role ASSIGNING FIELD-SYMBOL(<fs_role>)
-         WITH KEY role_name = ls_ur-role_name BINARY SEARCH.
-
-    DATA lv_level TYPE char15 VALUE 'No disponible'.
-    IF sy-subrc = 0.
-      lv_level = <fs_role>-fues_level.
-    ENDIF.
-
-    READ TABLE gt_fues_user ASSIGNING FIELD-SYMBOL(<fs_user>)
-         WITH KEY user_id = ls_ur-user_id BINARY SEARCH.
-    IF sy-subrc <> 0.
-      DATA(ls_new_user) = VALUE ty_user_fues( user_id    = ls_ur-user_id
-                                             fues_level = 'No disponible' ).
-      APPEND ls_new_user TO gt_fues_user.
-      SORT gt_fues_user BY user_id.
-      READ TABLE gt_fues_user ASSIGNING <fs_user>
-           WITH KEY user_id = ls_ur-user_id BINARY SEARCH.
-    ENDIF.
-
-    CASE lv_level.
-      WHEN 'AVANZADO'.
-        <fs_user>-fues_level = 'AVANZADO'.
-        <fs_user>-adv_ratio = <fs_user>-adv_ratio + 1.
-      WHEN 'CORE'.
-        IF <fs_user>-fues_level <> 'AVANZADO'.
-          <fs_user>-fues_level = 'CORE'.
-        ENDIF.
-        <fs_user>-core_ratio = <fs_user>-core_ratio + 1.
-      WHEN 'SELF SERV'.
-        IF <fs_user>-fues_level = 'No disponible'.
-          <fs_user>-fues_level = 'SELF SERV'.
-        ENDIF.
-    ENDCASE.
-
-    " Actualizar nivel FUES en tabla de salida de usuario-rol
-    ls_ur-fues_level = <fs_user>-fues_level.
-    MODIFY gt_user_role FROM ls_ur INDEX sy-tabix.
-  ENDLOOP.
-
-  LOOP AT gt_fues_user ASSIGNING <fs_user>.
-    DATA lv_total TYPE i.
-    lv_total = <fs_user>-adv_ratio + <fs_user>-core_ratio.
-    IF lv_total > 0.
-      <fs_user>-adv_ratio = <fs_user>-adv_ratio / lv_total * 100.
-      <fs_user>-core_ratio = <fs_user>-core_ratio / lv_total * 100.
-    ENDIF.
-  ENDLOOP.
-ENDFORM.
-
 *=====================================================================*
 * Carga de archivo Excel de clasificación FUES - SOLUTION 1 (Recommended)
 *=====================================================================*
@@ -751,7 +665,6 @@ FORM get_user_role_data.
   LOOP AT lt_temp ASSIGNING FIELD-SYMBOL(<fs_temp>).
     <fs_temp>-roles_per_user = 0.
     <fs_temp>-users_per_role = 0.
-    <fs_temp>-fues_level     = 'No disponible'.
   ENDLOOP.
 
   gt_user_role = lt_temp.
@@ -1417,7 +1330,6 @@ FORM display_user_role_alv.
       TRY. lo_cols->get_column( 'ROLES_PER_USER' )->set_medium_text( 'Roles x Usuario' ).   CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USERS_PER_ROLE' )->set_medium_text( 'Usuarios x Rol' ).    CATCH cx_salv_not_found. ENDTRY.
       TRY. lo_cols->get_column( 'USER_INACTIVE'  )->set_medium_text( 'Usuario inactivo' ).  CATCH cx_salv_not_found. ENDTRY.
-      TRY. lo_cols->get_column( 'FUES_LEVEL'    )->set_medium_text( 'Nivel FUES' ).       CATCH cx_salv_not_found. ENDTRY.
 
       lo_alv->display( ).
     CATCH cx_salv_msg INTO DATA(lx_msg_ur).

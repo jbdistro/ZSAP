@@ -225,6 +225,9 @@ SELECTION-SCREEN BEGIN OF BLOCK blk3 WITH FRAME TITLE TEXT-b03. " Opciones
 
 SELECTION-SCREEN END OF BLOCK blk3.
 
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  PERFORM f4_select_file.
+
 *======================================================================*
 * Lógica principal: Dispatcher de vistas según opción seleccionada (3) *
 *======================================================================*
@@ -327,7 +330,7 @@ ENDFORM.
 * Carga de archivo Excel de clasificación FUES - SOLUTION 1 (Recommended)
 *=====================================================================*
 FORM load_fues_data.
-  " Sin dependencias FDT. XLS con ALSM_EXCEL_TO_INTERNAL_TABLE, CSV/TSV/TXT con GUI_UPLOAD.
+  " Sin dependencias FDT. XLS/XLSX con ALSM_EXCEL_TO_INTERNAL_TABLE, CSV/TSV/TXT con GUI_UPLOAD.
   DATA: lt_raw_data   TYPE TABLE OF string,
         lv_filename   TYPE string,
         lv_line       TYPE string,
@@ -341,7 +344,9 @@ FORM load_fues_data.
         lv_step       TYPE string,
         lv_object     TYPE agr_1251-object,
         lv_field      TYPE agr_1251-field,
-        lv_value      TYPE agr_1251-low.
+        lv_value      TYPE agr_1251-low,
+        lt_excel_raw  TYPE TABLE OF alsmex_tabline,
+        lv_curr_row   TYPE i.
 
   CLEAR: gt_fues_tcode, gt_fues_auth.
   gv_fues_enabled = abap_false.
@@ -361,50 +366,82 @@ FORM load_fues_data.
   READ TABLE lt_parts INDEX lines( lt_parts ) INTO lv_extension.
   TRANSLATE lv_extension TO LOWER CASE.
 
-  " Solo se soporta CSV/TSV/TXT con columnas de autorización.
   IF lv_extension = 'xls' OR lv_extension = 'xlsx'.
-    MESSAGE 'Utilice archivo CSV con columnas: Regla, Tipo, Objeto, Campo, Valor.' TYPE 'W'.
-  ENDIF.
-
-  " === Leer CSV/TSV/TXT y parsear ===
-  TRY.
-      CALL FUNCTION 'GUI_UPLOAD'
-        EXPORTING
-          filename            = lv_filename
-          filetype            = 'ASC'     " texto
-          has_field_separator = space     " NO separar aquí
-        TABLES
-          data_tab            = lt_raw_data
-        EXCEPTIONS
-          OTHERS              = 1.
-    CATCH cx_root INTO DATA(lx_txt).
-      MESSAGE lx_txt->get_text( ) TYPE 'I'.
-      sy-subrc = 1.
-  ENDTRY.
-
-  " Si la lectura vía GUI_UPLOAD falla, intentar leer desde el servidor de aplicaciones
-  IF sy-subrc <> 0 OR lt_raw_data IS INITIAL.
-    " Si la ruta parece ser del front-end (ej. contiene ':' o '\'),
-    " no intentar leer desde el servidor de aplicaciones
-    IF lv_filename CS ':' OR lv_filename CS '\'.
-      MESSAGE 'Error al leer el archivo FUES. Verifique ruta y formato (CSV/TSV).' TYPE 'W'.
+    " === Leer Excel y convertir a líneas de texto ===
+    CLEAR lt_excel_raw.
+    CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+      EXPORTING
+        filename    = lv_filename
+        i_begin_col = 1
+        i_begin_row = 1
+        i_end_col   = 8
+        i_end_row   = 65535
+      TABLES
+        intern      = lt_excel_raw
+      EXCEPTIONS
+        OTHERS      = 1.
+    IF sy-subrc <> 0 OR lt_excel_raw IS INITIAL.
+      MESSAGE 'Error al leer el archivo FUES. Verifique ruta y formato (Excel).' TYPE 'W'.
       RETURN.
     ENDIF.
 
-    CLEAR lt_raw_data.
-    OPEN DATASET lv_filename FOR INPUT IN TEXT MODE ENCODING DEFAULT.
-    IF sy-subrc <> 0.
-      MESSAGE 'Error al leer el archivo FUES. Verifique ruta y formato (CSV/TSV).' TYPE 'W'.
-      RETURN.
-    ENDIF.
-    DO.
-      READ DATASET lv_filename INTO lv_line.
-      IF sy-subrc <> 0.
-        EXIT.
+    SORT lt_excel_raw BY row col.
+    CLEAR: lv_curr_row, lv_line.
+    LOOP AT lt_excel_raw INTO DATA(ls_excel).
+      IF lv_curr_row <> ls_excel-row.
+        IF lv_line IS NOT INITIAL.
+          APPEND lv_line TO lt_raw_data.
+          CLEAR lv_line.
+        ENDIF.
+        lv_curr_row = ls_excel-row.
       ENDIF.
+      CONCATENATE lv_line ls_excel-value INTO lv_line
+                  SEPARATED BY cl_abap_char_utilities=>horizontal_tab.
+    ENDLOOP.
+    IF lv_line IS NOT INITIAL.
       APPEND lv_line TO lt_raw_data.
-    ENDDO.
-    CLOSE DATASET lv_filename.
+    ENDIF.
+  ELSE.
+    " === Leer CSV/TSV/TXT y parsear ===
+    TRY.
+        CALL FUNCTION 'GUI_UPLOAD'
+          EXPORTING
+            filename            = lv_filename
+            filetype            = 'ASC'     " texto
+            has_field_separator = space     " NO separar aquí
+          TABLES
+            data_tab            = lt_raw_data
+          EXCEPTIONS
+            OTHERS              = 1.
+      CATCH cx_root INTO DATA(lx_txt).
+        MESSAGE lx_txt->get_text( ) TYPE 'I'.
+        sy-subrc = 1.
+    ENDTRY.
+
+    " Si la lectura vía GUI_UPLOAD falla, intentar leer desde el servidor de aplicaciones
+    IF sy-subrc <> 0 OR lt_raw_data IS INITIAL.
+      " Si la ruta parece ser del front-end (ej. contiene ':' o '\'),
+      " no intentar leer desde el servidor de aplicaciones
+      IF lv_filename CS ':' OR lv_filename CS '\'.
+        MESSAGE 'Error al leer el archivo FUES. Verifique ruta y formato (CSV/TSV).' TYPE 'W'.
+        RETURN.
+      ENDIF.
+
+      CLEAR lt_raw_data.
+      OPEN DATASET lv_filename FOR INPUT IN TEXT MODE ENCODING DEFAULT.
+      IF sy-subrc <> 0.
+        MESSAGE 'Error al leer el archivo FUES. Verifique ruta y formato (CSV/TSV).' TYPE 'W'.
+        RETURN.
+      ENDIF.
+      DO.
+        READ DATASET lv_filename INTO lv_line.
+        IF sy-subrc <> 0.
+          EXIT.
+        ENDIF.
+        APPEND lv_line TO lt_raw_data.
+      ENDDO.
+      CLOSE DATASET lv_filename.
+    ENDIF.
   ENDIF.
 
   lv_first_line = abap_true.
@@ -490,6 +527,32 @@ FORM load_fues_data.
     MESSAGE |Se cargaron { lines( gt_fues_auth ) } objetos FUES.| TYPE 'I'.
   ELSE.
     MESSAGE 'No se cargaron datos FUES válidos. Se continúa sin mapa FUES.' TYPE 'I'.
+  ENDIF.
+ENDFORM.
+
+*=====================================================================*
+* Ayuda de búsqueda para seleccionar archivo FUES                     *
+*=====================================================================*
+FORM f4_select_file.
+  DATA: lt_file_table TYPE filetable,
+        ls_file       TYPE file_table,
+        lv_rc         TYPE i.
+
+  CALL METHOD cl_gui_frontend_services=>file_open_dialog
+    EXPORTING
+      default_extension = 'csv'
+      file_filter       = 'Archivos (*.csv,*.txt,*.tsv,*.xls,*.xlsx)|*.csv;*.txt;*.tsv;*.xls;*.xlsx|'
+    CHANGING
+      file_table        = lt_file_table
+      rc                = lv_rc
+    EXCEPTIONS
+      OTHERS            = 1.
+
+  IF lv_rc > 0.
+    READ TABLE lt_file_table INTO ls_file INDEX 1.
+    IF sy-subrc = 0.
+      p_file = ls_file-filename.
+    ENDIF.
   ENDIF.
 ENDFORM.
 
